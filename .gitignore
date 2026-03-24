@@ -1,0 +1,24 @@
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+
+# Environment files
+.env
+.env.local
+
+# MCP configuration (may contain credentials)
+.mcp.json
