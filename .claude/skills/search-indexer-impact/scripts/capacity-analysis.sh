@@ -5,6 +5,49 @@
 
 set -euo pipefail
 
+# Function to capture capacity metric value and write to JSON
+capture_capacity_metric() {
+  local metric_name="$1"
+  local query="$2"
+  local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  # Execute the query and capture the numeric result
+  local raw_response=$(kubectl exec -n openshift-monitoring $PROM_POD -- curl -s "http://localhost:9090/api/v1/query" --data-urlencode "query=$query")
+
+  # Extract the first numeric value from the response
+  local value=$(echo "$raw_response" | python3 -c "
+import sys, json
+try:
+    data = json.loads(sys.stdin.read())
+    if data.get('status') == 'success' and data.get('data', {}).get('result'):
+        results = data['data']['result']
+        if results and len(results) > 0:
+            value = results[0].get('value', [None, None])
+            if len(value) > 1 and value[1] is not None:
+                print(value[1])
+            else:
+                print('null')
+        else:
+            print('null')
+    else:
+        print('null')
+except:
+    print('null')
+" 2>/dev/null)
+
+  # Update JSON with the captured value
+  if [ -n "${OUTPUT_FILE:-}" ]; then
+    jq --arg metric "$metric_name" --arg val "$value" --arg ts "$timestamp" '
+      .raw_metrics.capacity[$metric] = {
+        "value": ($val | if . == "null" then null else tonumber end),
+        "timestamp": $ts
+      }
+    ' "$OUTPUT_FILE" > "${OUTPUT_FILE}.tmp" && mv "${OUTPUT_FILE}.tmp" "$OUTPUT_FILE"
+  fi
+
+  return 0
+}
+
 echo "=== Capacity Utilization and Health Analysis ==="
 
 # Use ACM namespace from environment (set by generate-assessment.sh) or discover it
@@ -134,3 +177,19 @@ else
   echo "$(date '+%H:%M:%S') POD_HEALTH_WARNING: No indexer pods found for direct health check" >> "${EXECUTION_LOG:-/dev/null}"
   echo "  No indexer pods found for direct health check"
 fi
+
+# Capture key capacity metrics for JSON structure
+echo ""
+echo "📊 Capturing capacity metrics for assessment..."
+
+# Capture capacity utilization data
+capture_capacity_metric "current_requests_in_flight" "sum(search_indexer_requests_in_flight)"
+capture_capacity_metric "capacity_utilization_percent" "sum(search_indexer_requests_in_flight) / 25 * 100"
+capture_capacity_metric "avg_requests_in_flight_1h" "avg_over_time(sum(search_indexer_requests_in_flight)[1h:])"
+
+# Capture resource utilization data
+capture_capacity_metric "cpu_usage_millicores" "sum(rate(container_cpu_usage_seconds_total{pod=~\"search-indexer.*\", container=\"search-indexer\"}[5m])) * 1000"
+capture_capacity_metric "memory_usage_mb" "sum(container_memory_working_set_bytes{pod=~\"search-indexer.*\", container=\"search-indexer\"}) / 1024 / 1024"
+capture_capacity_metric "deployment_replicas" "kube_deployment_spec_replicas{deployment=\"search-indexer\", namespace=\"open-cluster-management\"}"
+
+echo "✅ Capacity metrics captured to JSON structure"

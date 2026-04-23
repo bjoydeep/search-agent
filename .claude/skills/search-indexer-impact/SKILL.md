@@ -255,3 +255,41 @@ The diagnostic queries in this skill are adapted from this production tool to pr
 - **Script-level Testing**: Each component can be validated separately
 - **Error Isolation**: Issues can be traced to specific assessment components
 - **Development Workflow**: Scripts can be iterated without affecting skill definitions
+
+## Skill Output Format
+
+When using this skill, always conclude your response with a clear **"Generated Files"** section that makes the created files visible to the user:
+
+```markdown
+## Assessment Complete ✅
+
+**Generated Files:**
+- 📊 **Main Report**: `{hub_cluster_id}_indexer_impact.json` - Comprehensive assessment with metrics, confidence scoring, and recommendations
+- 📋 **Execution Log**: `{hub_cluster_id}_indexer_execution.log` - Detailed script execution audit trail with query results
+- 📈 **Historical Trends**: `{hub_cluster_id}_historical_trends.log` - Time-series analysis and trend detection results
+
+**File Locations:**
+```
+monitoring_data/impacts/{hub_cluster_id}_indexer_impact.json
+monitoring_data/impacts/{hub_cluster_id}_indexer_execution.log  
+monitoring_data/impacts/{hub_cluster_id}_historical_trends.log
+```
+
+**Quick Access Commands:**
+```bash
+# View assessment results
+jq '.confidence_scoring, .raw_metrics' monitoring_data/impacts/{hub_cluster_id}_indexer_impact.json
+
+# Check execution details
+cat monitoring_data/impacts/{hub_cluster_id}_indexer_execution.log
+
+# View trend analysis  
+cat monitoring_data/impacts/{hub_cluster_id}_historical_trends.log
+```
+```
+
+This format ensures users can easily:
+- **See what files were created** and their purpose
+- **Copy file paths** for direct access
+- **Run quick commands** to view results immediately
+- **Understand file contents** without hunting through logs

@@ -6,6 +6,35 @@
 
 set -euo pipefail
 
+# Function to capture database metric value and write to JSON
+capture_database_metric() {
+  local metric_name="$1"
+  local metric_value="$2"
+  local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  # Update JSON with the captured value
+  if [ -n "${OUTPUT_FILE:-}" ]; then
+    jq --arg metric "$metric_name" --arg val "$metric_value" --arg ts "$timestamp" '
+      .raw_metrics.database[$metric] = {
+        "value": ($val | if . == "null" or . == "" then null else (if test("^[0-9.]+$") then tonumber else . end) end),
+        "timestamp": $ts
+      }
+    ' "$OUTPUT_FILE" > "${OUTPUT_FILE}.tmp" && mv "${OUTPUT_FILE}.tmp" "$OUTPUT_FILE"
+  fi
+
+  return 0
+}
+
+# Function to capture single database query value
+db_query_value() {
+  local query="$1"
+  local description="$2"
+
+  # Execute query and extract first numeric or text value
+  local result=$(kubectl exec -n $POSTGRES_NS $POSTGRES_POD -- psql -d $DB_NAME -U $DB_USER -t -c "$query" 2>/dev/null | head -1 | tr -d ' ' | tr -d '|')
+  echo "$result"
+}
+
 echo "=== Comprehensive PostgreSQL Diagnostics ==="
 
 # Robust PostgreSQL Pod Discovery with Multiple Fallback Strategies
@@ -104,6 +133,10 @@ if [ ! -z "$POSTGRES_POD" ]; then
   echo "Total resources and clusters:"
   db_query "SELECT COUNT(*) as total_resources, COUNT(DISTINCT cluster) as total_clusters FROM search.resources;" "Total resources and clusters count"
 
+  # Capture key values for JSON
+  TOTAL_RESOURCES=$(db_query_value "SELECT COUNT(*) FROM search.resources;" "Total resources count")
+  TOTAL_CLUSTERS=$(db_query_value "SELECT COUNT(DISTINCT cluster) FROM search.resources;" "Total clusters count")
+
   # Resources by cluster (top 20)
   echo ""
   echo "Resources by cluster (top 20):"
@@ -132,6 +165,9 @@ if [ ! -z "$POSTGRES_POD" ]; then
   echo "Total edges:"
   db_query "SELECT COUNT(*) as total_edges FROM search.edges;" "Total edge count"
 
+  # Capture edges value for JSON
+  TOTAL_EDGES=$(db_query_value "SELECT COUNT(*) FROM search.edges;" "Total edges count")
+
   # Edges by cluster
   echo ""
   echo "Edges by cluster:"
@@ -154,6 +190,11 @@ if [ ! -z "$POSTGRES_POD" ]; then
   # Database size and connection info
   echo "Database size and connection info:"
   db_query "SELECT datname, pg_size_pretty(pg_database_size(datname)) as size, numbackends as connections, xact_commit, xact_rollback, blks_read, blks_hit, ROUND(blks_hit * 100.0 / NULLIF(blks_hit + blks_read, 0), 2) as cache_hit_ratio FROM pg_stat_database WHERE datname = '$DB_NAME';" "Database statistics and cache performance"
+
+  # Capture database size and performance metrics for JSON
+  DB_SIZE_BYTES=$(db_query_value "SELECT pg_database_size('$DB_NAME');" "Database size in bytes")
+  DB_CONNECTIONS=$(db_query_value "SELECT numbackends FROM pg_stat_database WHERE datname = '$DB_NAME';" "Active connections")
+  CACHE_HIT_RATIO=$(db_query_value "SELECT ROUND(blks_hit * 100.0 / NULLIF(blks_hit + blks_read, 0), 2) FROM pg_stat_database WHERE datname = '$DB_NAME';" "Cache hit ratio")
 
   # Table sizes (resources and edges)
   echo ""
@@ -436,3 +477,36 @@ intelligent_log_analysis "30m" "Short-term indexer pattern analysis"
 echo ""
 echo "=== BROADER CONTEXT (Last 1 hour) ==="
 intelligent_log_analysis "1h" "Long-term indexer context analysis"
+
+# Capture key database metrics for JSON structure
+echo ""
+echo "📊 Capturing database metrics for assessment..."
+
+# Extract key metrics from variables captured during database analysis
+if [ ! -z "${TOTAL_RESOURCES:-}" ]; then
+  capture_database_metric "total_resources" "$TOTAL_RESOURCES"
+fi
+
+if [ ! -z "${TOTAL_CLUSTERS:-}" ]; then
+  capture_database_metric "total_clusters" "$TOTAL_CLUSTERS"
+fi
+
+if [ ! -z "${TOTAL_EDGES:-}" ]; then
+  capture_database_metric "total_edges" "$TOTAL_EDGES"
+fi
+
+if [ ! -z "${DB_SIZE_BYTES:-}" ]; then
+  # Convert bytes to MB for readability
+  DB_SIZE_MB=$(echo "scale=2; $DB_SIZE_BYTES / 1024 / 1024" | bc 2>/dev/null || echo "0")
+  capture_database_metric "database_size_mb" "$DB_SIZE_MB"
+fi
+
+if [ ! -z "${DB_CONNECTIONS:-}" ]; then
+  capture_database_metric "active_connections" "$DB_CONNECTIONS"
+fi
+
+if [ ! -z "${CACHE_HIT_RATIO:-}" ]; then
+  capture_database_metric "cache_hit_ratio_percent" "$CACHE_HIT_RATIO"
+fi
+
+echo "✅ Database metrics captured to JSON structure"

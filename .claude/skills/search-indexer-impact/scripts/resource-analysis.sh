@@ -5,6 +5,25 @@
 
 set -euo pipefail
 
+# Function to capture resource metric value and write to JSON
+capture_resource_metric() {
+  local metric_name="$1"
+  local metric_value="$2"
+  local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  # Update JSON with the captured value
+  if [ -n "${OUTPUT_FILE:-}" ]; then
+    jq --arg metric "$metric_name" --arg val "$metric_value" --arg ts "$timestamp" '
+      .raw_metrics.resources[$metric] = {
+        "value": ($val | if . == "null" or . == "" then null else (if test("^[0-9.]+$") then tonumber else . end) end),
+        "timestamp": $ts
+      }
+    ' "$OUTPUT_FILE" > "${OUTPUT_FILE}.tmp" && mv "${OUTPUT_FILE}.tmp" "$OUTPUT_FILE"
+  fi
+
+  return 0
+}
+
 echo "=== Resource Utilization Analysis ==="
 
 # Discover ACM namespace
@@ -194,6 +213,24 @@ else
   echo "  • ⚠️  Resource metrics collection has gaps - investigate kubectl top functionality"
   echo "  • Consider alternative monitoring methods if metrics-server is unavailable"
 fi
+
+# Capture key resource metrics for JSON structure
+echo ""
+echo "📊 Capturing resource metrics for assessment..."
+
+# Capture resource utilization data
+capture_resource_metric "indexer_cpu_millicores" "${INDEXER_CPU//m/}"
+capture_resource_metric "indexer_memory_mb" "${INDEXER_MEMORY//Mi/}"
+capture_resource_metric "postgres_cpu_millicores" "${POSTGRES_CPU//m/}"
+capture_resource_metric "postgres_memory_mb" "${POSTGRES_MEMORY//Mi/}"
+
+# Capture configuration limits
+INDEXER_CPU_REQUEST="${INDEXER_CPU_REQUEST:-10}"
+INDEXER_MEMORY_REQUEST="${INDEXER_MEMORY_REQUEST//Mi/}"
+capture_resource_metric "indexer_cpu_request_millicores" "${INDEXER_CPU_REQUEST//m/}"
+capture_resource_metric "indexer_memory_request_mb" "${INDEXER_MEMORY_REQUEST:-32}"
+
+echo "✅ Resource metrics captured to JSON structure"
 
 # Log detailed summary for JSON integration
 echo "$(date '+%H:%M:%S') RESOURCE_SUMMARY: indexer_cpu=$INDEXER_CPU, indexer_memory=$INDEXER_MEMORY, postgres_cpu=$POSTGRES_CPU, postgres_memory=$POSTGRES_MEMORY" >> "${EXECUTION_LOG:-/dev/null}"

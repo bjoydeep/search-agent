@@ -5,6 +5,49 @@
 
 set -euo pipefail
 
+# Function to capture metric value and write to JSON
+capture_metric() {
+  local metric_name="$1"
+  local query="$2"
+  local timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  # Execute the query and capture the numeric result
+  local raw_response=$(kubectl exec -n openshift-monitoring $PROM_POD -- curl -s "http://localhost:9090/api/v1/query" --data-urlencode "query=$query")
+
+  # Extract the first numeric value from the response
+  local value=$(echo "$raw_response" | python3 -c "
+import sys, json
+try:
+    data = json.loads(sys.stdin.read())
+    if data.get('status') == 'success' and data.get('data', {}).get('result'):
+        results = data['data']['result']
+        if results and len(results) > 0:
+            value = results[0].get('value', [None, None])
+            if len(value) > 1 and value[1] is not None:
+                print(value[1])
+            else:
+                print('null')
+        else:
+            print('null')
+    else:
+        print('null')
+except:
+    print('null')
+" 2>/dev/null)
+
+  # Update JSON with the captured value
+  if [ -n "${OUTPUT_FILE:-}" ]; then
+    jq --arg metric "$metric_name" --arg val "$value" --arg ts "$timestamp" '
+      .raw_metrics.prometheus[$metric] = {
+        "value": ($val | if . == "null" then null else tonumber end),
+        "timestamp": $ts
+      }
+    ' "$OUTPUT_FILE" > "${OUTPUT_FILE}.tmp" && mv "${OUTPUT_FILE}.tmp" "$OUTPUT_FILE"
+  fi
+
+  return 0
+}
+
 echo "=== Prometheus API Metrics Collection ==="
 
 # Discover Prometheus pod (corrected approach)
@@ -112,9 +155,13 @@ echo "Request Count by Cluster:"
 echo "  Attempting aggregated request count by cluster:"
 if prom_query "sum(search_indexer_request_count) by (managed_cluster_name)"; then
   echo "  ✅ Advanced aggregation successful"
+  # Capture total requests for JSON
+  capture_metric "total_requests" "sum(search_indexer_request_count)"
 else
   echo "  ⚠️  Advanced query failed, using basic counter:"
   prom_query "search_indexer_request_count"
+  # Capture basic request count for JSON
+  capture_metric "total_requests" "search_indexer_request_count"
 fi
 
 # Request rate analysis - try rate() first, fallback to counters
@@ -198,5 +245,23 @@ echo ""
 echo "Capacity Utilization:"
 echo "  Current requests in flight:"
 prom_query "search_indexer_requests_in_flight"
+# Capture requests in flight for JSON
+capture_metric "requests_in_flight" "search_indexer_requests_in_flight"
+
 echo "  Capacity utilization percentage:"
 prom_query "search_indexer_requests_in_flight / 25 * 100"
+# Capture capacity utilization for JSON
+capture_metric "capacity_utilization_percent" "search_indexer_requests_in_flight / 25 * 100"
+
+# Capture additional key metrics for JSON structure
+echo ""
+echo "📊 Capturing structured metrics for assessment..."
+
+# Capture duration percentiles
+capture_metric "request_duration_p95" "histogram_quantile(0.95, sum(rate(search_indexer_request_duration_bucket[5m])) by (le))"
+capture_metric "request_duration_p50" "histogram_quantile(0.50, sum(rate(search_indexer_request_duration_bucket[5m])) by (le))"
+
+# Capture success rate
+capture_metric "success_rate_percent" "sum(rate(search_indexer_request_duration_count{code=\"200\"}[5m])) / sum(rate(search_indexer_request_duration_count[5m])) * 100"
+
+echo "✅ Prometheus metrics captured to JSON structure"

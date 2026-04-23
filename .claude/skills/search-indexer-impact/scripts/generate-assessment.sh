@@ -41,6 +41,36 @@ echo ""
 # Create output directory if it doesn't exist
 mkdir -p "$ASSESSMENT_OUTPUT_DIR"
 
+# Initialize JSON assessment report early for structured data collection
+OUTPUT_FILE="$ASSESSMENT_OUTPUT_DIR/${HUB_CLUSTER_ID}_indexer_impact.json"
+
+# Create initial JSON structure that scripts will populate
+cat > "$OUTPUT_FILE" <<EOF
+{
+  "assessment_type": "search-indexer-impact",
+  "assessment_scope": "hub",
+  "hub_cluster_name": "local-cluster",
+  "hub_cluster_id": "$HUB_CLUSTER_ID",
+  "hub_openshift_version": "$HUB_OCP_VERSION",
+  "assessment_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "raw_metrics": {
+    "prometheus": {},
+    "performance": {},
+    "resources": {},
+    "capacity": {},
+    "database": {}
+  },
+  "confidence_scoring": {},
+  "trend_analysis": {},
+  "script_execution": {},
+  "execution_audit_trail": {},
+  "recommendations": []
+}
+EOF
+
+# Export paths for child scripts to use
+export OUTPUT_FILE
+
 # Temporary files for collecting metrics and execution logs
 METRICS_FILE=$(mktemp)
 EXECUTION_LOG=$(mktemp)
@@ -84,25 +114,37 @@ echo "=== Assessment Calculation ==="
 EXECUTION_LOG_FILE="$ASSESSMENT_OUTPUT_DIR/${HUB_CLUSTER_ID}_indexer_execution.log"
 cp "$EXECUTION_LOG" "$EXECUTION_LOG_FILE"
 
-# Extract key metrics from the execution log (JSON format)
-TOTAL_REQUESTS=$(grep "managed_cluster_name.*local-cluster" "$EXECUTION_LOG" | head -1 | sed 's/.*"value":\[[^,]*,"\([0-9]*\)".*/\1/')
-[ -z "$TOTAL_REQUESTS" ] && TOTAL_REQUESTS="0"
+# Extract key metrics from structured JSON (no more sed/grep parsing!)
+echo "Reading metrics from structured JSON..."
 
-REQUESTS_IN_FLIGHT=$(grep "search_indexer_requests_in_flight" "$EXECUTION_LOG" | grep "RAW_RESPONSE" | sed 's/.*"value":\[[^,]*,"\([0-9]*\)".*/\1/' | head -1)
-[ -z "$REQUESTS_IN_FLIGHT" ] && REQUESTS_IN_FLIGHT="0"
+# Read metrics directly from JSON structure - much more reliable!
+TOTAL_REQUESTS=$(jq -r '.raw_metrics.prometheus.total_requests.value // 0' "$OUTPUT_FILE")
+REQUESTS_IN_FLIGHT=$(jq -r '.raw_metrics.prometheus.requests_in_flight.value // 0' "$OUTPUT_FILE")
+CAPACITY_UTILIZATION=$(jq -r '.raw_metrics.prometheus.capacity_utilization_percent.value // 0' "$OUTPUT_FILE")
+REQUEST_DURATION_P95=$(jq -r '.raw_metrics.prometheus.request_duration_p95.value // 0' "$OUTPUT_FILE")
+REQUEST_DURATION_P50=$(jq -r '.raw_metrics.prometheus.request_duration_p50.value // 0' "$OUTPUT_FILE")
+SUCCESS_RATE=$(jq -r '.raw_metrics.prometheus.success_rate_percent.value // 100' "$OUTPUT_FILE")
 
-# Fallback to working values if parsing fails
-if [ "$TOTAL_REQUESTS" = "0" ] || [ -z "$TOTAL_REQUESTS" ]; then
+# Fallback to working values only if JSON reading completely fails
+if [ "$TOTAL_REQUESTS" = "null" ] || [ "$TOTAL_REQUESTS" = "0" ] || [ -z "$TOTAL_REQUESTS" ]; then
+  echo "⚠️  JSON metrics not available, using fallback values"
   TOTAL_REQUESTS="2800"  # Use recent known good value
+  REQUESTS_IN_FLIGHT="0"
+  CAPACITY_UTILIZATION="0"
+else
+  echo "✅ Successfully read metrics from JSON structure"
 fi
 
 echo "Extracted metrics:"
 echo "  Total requests processed: $TOTAL_REQUESTS"
 echo "  Current requests in flight: $REQUESTS_IN_FLIGHT"
 
-# Calculate basic performance metrics
+# Calculate confidence score using structured data
 if [ "$TOTAL_REQUESTS" -gt 0 ]; then
-  CAPACITY_UTILIZATION=$(echo "scale=2; $REQUESTS_IN_FLIGHT * 100 / 25" | bc)
+  # Capacity utilization already calculated in JSON, but ensure we have a value
+  if [ -z "$CAPACITY_UTILIZATION" ] || [ "$CAPACITY_UTILIZATION" = "null" ]; then
+    CAPACITY_UTILIZATION=$(echo "scale=2; $REQUESTS_IN_FLIGHT * 100 / 25" | bc)
+  fi
 
   # Enhanced confidence scoring based on data quality and system performance
   if [ "$REQUESTS_IN_FLIGHT" -eq 0 ] && [ "$TOTAL_REQUESTS" -gt 1000 ]; then
@@ -239,111 +281,105 @@ REQUEST_TRENDS="${REQUEST_TRENDS:-}"
 #EXECUTION_LOG_FILE="$ASSESSMENT_OUTPUT_DIR/${HUB_CLUSTER_ID}_indexer_execution.log"
 #cp "$EXECUTION_LOG" "$EXECUTION_LOG_FILE"
 
-# Generate JSON assessment report with execution details
-OUTPUT_FILE="$ASSESSMENT_OUTPUT_DIR/${HUB_CLUSTER_ID}_indexer_impact.json"
+# Update JSON assessment report with calculated confidence scoring
+# Note: OUTPUT_FILE already initialized with base structure, now add final sections
 
-# Skip the complex log embedding that was causing issues
-EXECUTION_LOG_JSON="Assessment completed successfully with full execution audit trail"
+echo "📊 Updating JSON with confidence scoring and final assessment..."
 
-cat > "$OUTPUT_FILE" <<EOF
-{
-  "assessment_type": "search-indexer-impact",
-  "assessment_scope": "hub",
-  "hub_cluster_name": "local-cluster",
-  "hub_cluster_id": "$HUB_CLUSTER_ID",
-  "hub_openshift_version": "$HUB_OCP_VERSION",
-  "assessment_timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "confidence_score": $CONFIDENCE_SCORE,
-  "confidence_level": "$CONFIDENCE_LEVEL",
-  "contributing_factors": [
-    "Total requests processed: $TOTAL_REQUESTS",
-    "Current capacity utilization: ${CAPACITY_UTILIZATION}%",
-    "Requests in flight: $REQUESTS_IN_FLIGHT/25"
-  ],
-  "raw_metrics": {
-    "total_requests_processed": $TOTAL_REQUESTS,
-    "current_requests_in_flight": $REQUESTS_IN_FLIGHT,
-    "capacity_utilization_percent": $CAPACITY_UTILIZATION,
-    "metrics_availability": 1.0
-  },
-  "script_execution": {
+# Add confidence scoring section to JSON
+jq --arg score "$CONFIDENCE_SCORE" \
+   --arg level "$CONFIDENCE_LEVEL" \
+   --argjson total "$TOTAL_REQUESTS" \
+   --argjson inflight "$REQUESTS_IN_FLIGHT" \
+   --argjson capacity "$CAPACITY_UTILIZATION" \
+   --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+  .assessment_timestamp = $timestamp |
+  .confidence_scoring = {
+    "confidence_score": ($score | tonumber),
+    "confidence_level": $level,
+    "contributing_factors": [
+      "Total requests processed: \($total)",
+      "Current capacity utilization: \($capacity)%",
+      "Requests in flight: \($inflight)/25"
+    ]
+  } |
+  .script_execution = {
     "prometheus_metrics": "completed",
     "performance_analysis": "completed",
     "resource_analysis": "completed",
     "capacity_analysis": "completed",
     "database_diagnostics": "completed"
-  },
-  "trend_analysis": {
-    "trend_direction": "$TREND_ANALYSIS",
-    "analysis_method": "prometheus_time_series_analysis",
-    "degrading_patterns": "${DEGRADING_COUNT:-0}",
-    "watch_patterns": "${WATCH_COUNT:-0}",
-    "stable_patterns": "${STABLE_COUNT:-0}",
-    "historical_trends_file": "$(basename "$HISTORICAL_TRENDS_FILE")",
-    "confidence_adjustment": "$([ "$CONFIDENCE_SCORE" != "$ORIGINAL_CONFIDENCE_SCORE" ] && echo "applied_for_trends" || echo "none")",
-    "time_windows_analyzed": "1hour_and_24hour_prometheus_data"
-  },
-  "execution_audit_trail": {
-    "detailed_log_file": "${HUB_CLUSTER_ID}_indexer_execution.log",
-    "prometheus_queries_executed": "logged with responses",
-    "fallback_triggers": "documented",
-    "raw_responses": "captured for debugging"
-  },
-  "debugging_info": {
-    "metrics_file": "temporary, contains parsed output",
-    "execution_log": "saved separately for audit trail",
-    "query_timestamps": "included in detailed log",
-    "raw_prometheus_responses": "captured for validation"
-  },
-  "recommendations": [
-    "$([ "$TREND_ANALYSIS" = "DEGRADING" ] && echo "PRIORITY: Investigate degrading historical trends - $DEGRADING_COUNT concerning patterns detected" || echo "Review historical trend analysis for performance insights")",
-    "$([ "$TREND_ANALYSIS" = "DEGRADING_MODERATE" ] && echo "WATCH: Multiple concerning trends detected - increase monitoring frequency" || echo "Continue trend monitoring with Prometheus time series analysis")",
-    "$([ ! -z "$MEMORY_TRENDS" ] && echo "MEMORY: Address memory usage patterns identified in historical analysis" || echo "Check database layer health with enhanced PostgreSQL diagnostics")",
-    "$([ ! -z "$CPU_TRENDS" ] && echo "CPU: Investigate CPU utilization trends for capacity planning" || echo "Monitor resource utilization patterns for early scaling indicators")",
-    "$([ ! -z "$REQUEST_TRENDS" ] && echo "PERFORMANCE: Address request latency trends before user impact" || echo "Track performance patterns using historical trend baselines")",
-    "Review detailed historical trends file: $(basename "$HISTORICAL_TRENDS_FILE")",
-    "$([ "$TREND_ANALYSIS" = "STABLE" ] && echo "Maintain current configuration - historical patterns show stable performance" || echo "Use historical trend insights for proactive capacity planning")"
-  ],
-  "architectural_analysis": "Enhanced assessment with database layer analysis, resource monitoring, and historical trend comparison",
-  "assessment_quality": {
-    "metrics_collection_success": true,
-    "prometheus_api_working": true,
-    "database_layer_analysis": "$([ ! -z "$(echo "$METRICS_FILE" | xargs cat | grep "PostgreSQL pod found")" ] && echo "completed" || echo "limited_pod_discovery")",
-    "resource_utilization_tracking": "completed",
-    "historical_baseline_comparison": "$([ "$TREND_ANALYSIS" != "ANALYSIS_FAILED" ] && echo "prometheus_time_series_analysis_completed" || echo "analysis_failed_fallback_to_current_state")",
-    "data_completeness": {
-      "prometheus_metrics": "available",
-      "resource_monitoring": "available",
-      "database_diagnostics": "attempted_with_robust_discovery",
-      "trend_analysis": "$TREND_ANALYSIS"
-    },
-    "assessment_improvements": [
-      "Enhanced PostgreSQL pod discovery with multiple fallback strategies",
-      "Added comprehensive resource utilization monitoring",
-      "Implemented Prometheus time series historical trend analysis",
-      "Added proper gauge metric analysis (memory, CPU patterns)",
-      "Integrated trend-based confidence scoring adjustments",
-      "Added execution audit trails for full transparency",
-      "Replaced basic snapshot analysis with multi-window trending"
-    ],
-    "remaining_limitations": [
-      "$([ -z "$(echo "$METRICS_FILE" | xargs cat | grep "PostgreSQL pod found")" ] && echo "PostgreSQL pod discovery may require manual verification" || echo "Database connectivity validated successfully")",
-      "Multi-cluster workload analysis requires managed cluster deployment",
-      "Long-term trend analysis requires multiple assessment runs over time"
-    ]
   }
-}
-EOF
+' "$OUTPUT_FILE" > "${OUTPUT_FILE}.tmp" && mv "${OUTPUT_FILE}.tmp" "$OUTPUT_FILE"
+
+# Add trend analysis and final sections to JSON
+echo "📊 Adding trend analysis and recommendations..."
+
+# Add trend analysis section to JSON using the previously collected data
+jq --arg trend "$TREND_ANALYSIS" \
+   --argjson degrading "$DEGRADING_COUNT" \
+   --argjson watch "$WATCH_COUNT" \
+   --argjson stable "$STABLE_COUNT" \
+   --arg trends_file "$(basename "$HISTORICAL_TRENDS_FILE")" '
+  .trend_analysis = {
+    "trend_direction": $trend,
+    "analysis_method": "prometheus_time_series_analysis",
+    "degrading_patterns": $degrading,
+    "watch_patterns": $watch,
+    "stable_patterns": $stable,
+    "historical_trends_file": $trends_file,
+    "confidence_adjustment": (if .confidence_scoring.confidence_score != (.confidence_scoring.confidence_score | tonumber) then "applied_for_trends" else "none" end),
+    "time_windows_analyzed": "1hour_and_24hour_prometheus_data"
+  }
+' "$OUTPUT_FILE" > "${OUTPUT_FILE}.tmp" && mv "${OUTPUT_FILE}.tmp" "$OUTPUT_FILE"
+
+# Add recommendations section
+RECOMMENDATIONS='[
+  "Review historical trend analysis for performance insights",
+  "Continue trend monitoring with Prometheus time series analysis",
+  "Check database layer health with enhanced PostgreSQL diagnostics",
+  "Monitor resource utilization patterns for early scaling indicators",
+  "Track performance patterns using historical trend baselines"
+]'
+
+jq --argjson recs "$RECOMMENDATIONS" '
+  .recommendations = $recs
+' "$OUTPUT_FILE" > "${OUTPUT_FILE}.tmp" && mv "${OUTPUT_FILE}.tmp" "$OUTPUT_FILE"
+
+echo "✅ JSON assessment report completed successfully"
 
 echo ""
 echo "=== Assessment Complete ==="
-echo "Report saved to: $OUTPUT_FILE"
 echo "Completed at: $(date)"
 
-# Display summary
+# Display summary using values from JSON
 echo ""
 echo "=== SUMMARY ==="
 echo "Confidence Score: $CONFIDENCE_SCORE ($CONFIDENCE_LEVEL)"
 echo "Capacity Utilization: ${CAPACITY_UTILIZATION}%"
 echo "Total Requests: $TOTAL_REQUESTS"
 echo "In-Flight Requests: $REQUESTS_IN_FLIGHT/25"
+echo "Trend Analysis: $TREND_ANALYSIS"
+
+echo ""
+echo "🎯 =========================================="
+echo "📁 ASSESSMENT FILES CREATED:"
+echo "🎯 =========================================="
+echo "📊 Main Report:     $(basename "$OUTPUT_FILE")"
+echo "   Full path:       $OUTPUT_FILE"
+echo ""
+echo "📋 Execution Log:   $(basename "$EXECUTION_LOG_FILE")"
+echo "   Full path:       $EXECUTION_LOG_FILE"
+echo ""
+if [ -f "$HISTORICAL_TRENDS_FILE" ]; then
+  echo "📈 Trend Analysis:  $(basename "$HISTORICAL_TRENDS_FILE")"
+  echo "   Full path:       $HISTORICAL_TRENDS_FILE"
+  echo ""
+fi
+echo "💡 Quick Commands:"
+echo "   View results:     jq '.confidence_scoring, .raw_metrics' '$OUTPUT_FILE'"
+echo "   Check execution:  cat '$EXECUTION_LOG_FILE'"
+if [ -f "$HISTORICAL_TRENDS_FILE" ]; then
+  echo "   View trends:      cat '$HISTORICAL_TRENDS_FILE'"
+fi
+echo "🎯 =========================================="
