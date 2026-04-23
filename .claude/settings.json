@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "defaultMode": "auto",
+    "allow": [
+      "Edit(**/scripts/*.sh)",
+      "Edit(.claude/skills/**/*.sh)",
+      "Bash(kubectl get *)",
+      "Bash(kubectl list *)",
+      "Bash(kubectl describe *)",
+      "Bash(kubectl top *)",
+      "Bash(kubectl logs *)",
+      "Bash(ls *)",
+      "Bash(grep *)",
+      "Bash(awk *)",
+      "Bash(cat *)",
+      "Bash(curl *)",
+      "Bash(*/.claude/skills/**/*.sh *)",
+      "Bash(**/scripts/*.sh *)",
+      "Bash(scripts/assess-*.sh *)",
+      "Bash(.claude/skills/search-*-impact/scripts/*.sh *)",
+      "Bash(.claude/skills/search-*/scripts/*.sh *)",
+      "Bash(cd *)",
+      "Bash(mkdir -p *)",
+      "Bash(echo * > *)",
+      "Bash(date *)",
+      "Bash(jq *)"
+    ],
+    "deny": [
+      "Bash(ls / *)",
+      "Bash(ls ~*)",
+      "Bash(cat / *)",
+      "Bash(cat ~*)",
+      "Bash(grep * / *)",
+      "Bash(grep * ~*)",
+      "Bash(rm *)",
+      "Bash(tee *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(sudo *)",
+      "Bash(kubectl delete *)"
+    ]
+  }
+}

@@ -1,31 +1,35 @@
 ---
 name: search-api
-description: ACM Search API GraphQL optimization, RBAC patterns, query performance, and client integration
+description: ACM Search API GraphQL optimization, RBAC patterns, query performance, and client integration strategies  
 ---
 
 # Search API Deep Dive
 
-## Source Code Repository
-**GitHub**: https://github.com/stolostron/search-v2-api
+## Purpose
+The ACM Search API serves as the GraphQL query interface for multi-cluster search capabilities. It provides secure, RBAC-aware access to indexed cluster data with optimized query patterns for ACM dashboards and tooling.
 
-### Key Source Files & Patterns
-- **GraphQL schema & resolvers**: `pkg/resolver/` - Type-safe schema generation and query resolution
-- **Authentication & RBAC**: `pkg/rbac/` - TokenReview, SSAR/SSRR integration, and caching
-- **Database queries**: `pkg/database/` - SQL query generation and optimization
-- **HTTP server**: `pkg/server/` - GraphQL endpoint and middleware
-- **Configuration**: `cmd/main.go` - Server startup and authentication configuration
+## Role in ACM Search Architecture
 
-### Code Exploration Tips
-- Start with `cmd/main.go` for server initialization and auth setup
-- Review `pkg/resolver/` for GraphQL resolver patterns and lazy loading
-- Check `pkg/rbac/` for RBAC caching strategies and Kubernetes integration
-- Look at `pkg/database/query_builder.go` for SQL generation patterns
+### Core Responsibilities  
+- **GraphQL Query Processing**: Provides type-safe, efficient GraphQL interface with lazy field resolution
+- **RBAC Enforcement**: Implements Kubernetes-native authentication and authorization with intelligent caching
+- **Database Query Optimization**: Transforms GraphQL queries into optimized PostgreSQL queries with JSONB support
+- **Client Integration**: Serves ACM console, CLI tools, and third-party integrations with consistent API
+- **Real-time Updates**: WebSocket subscriptions for live cluster state changes
 
-## Current API Status
-- Active queries being served: !`find_resources --outputMode=count` total resources available
-- Recent query activity: !`find_resources --ageNewerThan=1h --outputMode=count --groupBy=cluster`
-- Resource type distribution: !`find_resources --outputMode=count --groupBy=kind --limit=15`
-- Current fleet accessibility: !`find_resources --kind=ManagedCluster --outputMode=count --groupBy=status`
+### Data Flow Position
+```
+Client Queries → API → Database → Indexer ← Collectors (managed clusters)
+```
+
+The API is the primary consumer interface in this flow - its performance directly impacts:
+- **User experience**: Dashboard responsiveness and query result latency
+- **System capacity**: How many concurrent users and queries the system can handle
+- **RBAC overhead**: Authentication and authorization efficiency across large user bases
+- **Database pressure**: SQL query patterns and connection pool utilization
+
+## Optimization Focus
+This skill covers GraphQL performance optimization, RBAC caching strategies, database query patterns, and client integration approaches. Focuses on architectural principles and performance patterns independent of specific implementation details.
 
 ## Core Architecture
 
@@ -37,238 +41,127 @@ Client Query → gqlgen Framework → Lazy Resolvers → SQL Builder → Postgre
   Batching      Generation        Resolution     Builder    + Index Opts
 ```
 
-### Technical Implementation
-- **gqlgen Framework**: Type-safe GraphQL schema generation with automatic resolver binding
-- **Lazy Field Resolution**: `SearchResult` struct encapsulates query state, resolvers defer execution
-- **Multi-Query Batching**: Independent search inputs with different filters/keywords/limits
-- **SQL Query Builder**: goqu/v9 dynamic, type-safe query construction
-- **Recursive CTEs**: Configurable depth graph traversal (apps=3, searches=1)
+### Key Optimization Principles
+- **Lazy Field Resolution**: Defer expensive operations until explicitly requested by client queries
+- **Type-Safe Schema Generation**: Use gqlgen for compile-time GraphQL schema validation and optimization
+- **RBAC Cache Hierarchies**: Three-tier caching (token → system → user) for authentication efficiency  
+- **SQL Query Builder**: Dynamic, parameterized query generation for security and performance
+- **Connection Management**: Efficient database connection pooling and lifecycle management
 
-### RBAC & Authentication
-- **TokenReview API**: Kubernetes-native stateless authentication with token caching
-- **Three-Tier RBAC Cache**: Token cache + shared system cache + user-specific cache
-- **SSAR/SSRR Integration**: Native Kubernetes permission determination via SubjectAccessReview
-- **Complex WHERE Clauses**: Four-layer permission enforcement with cluster admin bypass
+### Performance Patterns
+- **Multi-Query Batching**: Process independent search inputs in single GraphQL operation
+- **Recursive Graph Limits**: Configurable depth controls for relationship traversal (apps=3, searches=1)
+- **JSONB Query Optimization**: Index-aware property access and containment operations
+- **Permission-Aware SQL**: Integrate RBAC filtering at query generation level rather than post-processing
 
-## Common Issues & Solutions
+## Optimization Strategies
 
-### GraphQL Query Performance
-**Symptoms:**
-- Slow API response times
-- GraphQL query timeouts
-- High database load from API queries
+### GraphQL Query Performance Optimization
+**Common Problems:**
+- Slow resolver execution affecting user experience
+- N+1 query problems with related data loading
+- Complex nested queries overwhelming database
 
-**Diagnostic Commands:**
-```bash
-# API pod status and resource usage
-kubectl get pods -l component=search-api -o wide
-kubectl top pods -l component=search-api
+**Optimization Patterns:**
+- **Field-Level Lazy Loading**: Only resolve requested fields to minimize database queries
+- **DataLoader Patterns**: Batch related data fetches to prevent N+1 query scenarios
+- **Query Complexity Limits**: Implement depth and complexity analysis to prevent expensive operations
+- **Resolver Caching**: Cache frequently accessed data at resolver level
 
-# GraphQL query performance and errors
-kubectl logs -l component=search-api --tail=200 | grep -E "(query|resolver|timeout|error)"
+### RBAC and Authentication Optimization
+**Common Problems:**
+- TokenReview API call overhead for every request
+- Permission checks overwhelming Kubernetes API server
+- Cache invalidation complexity for user permission changes
 
-# Database query patterns from API
-kubectl logs -l component=search-api --tail=100 | grep -E "(sql|database|postgres)"
+**Optimization Patterns:**
+- **Token Caching Strategies**: Multi-tier cache with appropriate TTL based on token types
+- **Permission Result Caching**: Cache SubjectAccessReview results with namespace-aware expiration
+- **Batch Permission Checks**: Group permission validation for efficiency
+- **Graceful Degradation**: Handle authentication API failures without complete service disruption
 
-# Response time analysis
-kubectl logs -l component=search-api --tail=200 | grep -E "(duration|latency|response)"
-```
+### Database Query Optimization
+**Common Problems:**
+- Inefficient JSONB queries causing slow response times
+- Full table scans for complex filter combinations
+- Connection pool exhaustion under concurrent load
 
-**Common Causes:**
-- [TODO: Add GraphQL query optimization patterns]
-- [TODO: Add resolver performance tuning strategies]
-- [TODO: Add database query optimization for API patterns]
+**Optimization Patterns:**
+- **Index-Aware Query Generation**: Structure SQL to leverage GIN indexes on JSONB properties
+- **Parameterized Query Building**: Use type-safe query builders to prevent SQL injection and enable caching
+- **Connection Pool Tuning**: Right-size connection pools for concurrent GraphQL query patterns
+- **Query Result Pagination**: Efficient offset/limit patterns for large result sets
 
-### RBAC & Authentication Issues
-**Symptoms:**
-- Authorization failures for valid users
-- Missing resources in search results
-- Token validation errors
+### Client Integration Optimization
+**Common Problems:**
+- GraphQL schema evolution breaking client compatibility
+- CORS configuration issues affecting browser-based clients
+- WebSocket subscription management complexity
 
-**Diagnostic Commands:**
-```bash
-# RBAC cache performance and auth errors
-kubectl logs -l component=search-api --tail=200 | grep -E "(rbac|auth|token|permission)"
+**Optimization Patterns:**
+- **Schema Versioning**: Backward-compatible GraphQL schema evolution strategies
+- **Subscription Lifecycle Management**: Efficient WebSocket connection handling and cleanup
+- **Client-Aware Caching**: HTTP cache headers and ETags for efficient client-side caching
+- **Error Handling Standards**: Consistent error response format across all client interaction patterns
 
-# TokenReview API calls and caching
-kubectl logs -l component=search-api --tail=100 | grep -E "(TokenReview|SubjectAccessReview|cache)"
+## Integration Considerations
 
-# User permission validation
-kubectl logs -l component=search-api --tail=300 | grep -E "(SSAR|SSRR|ClusterRole|namespace)"
-```
+### **Impact on Database Performance**
+- GraphQL query patterns determine database query complexity and load patterns
+- RBAC permission checks generate additional database queries for access control
+- Client subscription patterns affect database connection pool utilization
 
-**Authentication Patterns:**
-- [TODO: Add TokenReview optimization and caching strategies]
-- [TODO: Add RBAC troubleshooting for missing resource access]
-- [TODO: Add permission debugging workflows]
+### **Dependency on Indexer Data Quality**
+- Data freshness depends on indexer processing efficiency and collector synchronization
+- Relationship completeness affects GraphQL traversal query results
+- Database schema changes require coordinated API schema updates
 
-### Client Integration Problems
-**Symptoms:**
-- Connection failures from ACM UI
-- Inconsistent search results across clients
-- Client timeout errors
+### **Client Integration Requirements**
+- ACM console performance directly correlates with API response times
+- CLI tools and automation depend on consistent GraphQL schema evolution
+- Third-party integrations require stable API contract and authentication patterns
 
-**Diagnostic Commands:**
-```bash
-# HTTP connection and client errors
-kubectl logs -l component=search-api --tail=200 | grep -E "(http|client|connection|cors)"
+### **Cross-Cluster Data Access Patterns**
+- Multi-cluster queries require efficient cross-cluster relationship handling
+- RBAC enforcement must account for cluster-level and namespace-level permissions
+- Federation patterns for scaling across very large cluster fleets
 
-# GraphQL schema and introspection issues
-kubectl logs -l component=search-api --tail=100 | grep -E "(schema|introspection|mutation)"
+## Scaling & Optimization Strategies
 
-# Load balancing and service health
-kubectl get svc search-api -o yaml
-kubectl get endpoints search-api
-```
+### Horizontal Scaling Patterns
+- **Stateless API Design**: Enable horizontal scaling through stateless GraphQL processing
+- **Load Balancer Configuration**: Distribute client connections efficiently across API replicas
+- **Session Affinity**: Handle WebSocket subscriptions with appropriate connection routing
+- **Database Connection Distribution**: Coordinate connection pool usage across API replicas
 
-**Integration Patterns:**
-- [TODO: Add client integration debugging patterns]
-- [TODO: Add CORS and HTTP configuration troubleshooting]
-- [TODO: Add GraphQL schema evolution and compatibility]
+### Performance Tuning Approaches
+- **Resolver Optimization**: Minimize database queries through efficient field resolution patterns
+- **Cache Strategy Tuning**: Balance cache hit rates with memory utilization and invalidation complexity
+- **Query Complexity Management**: Implement client-aware limits based on authentication context
+- **Connection Management**: Optimize database connection lifecycle for GraphQL workload patterns
 
-### Query Optimization Issues
-**Symptoms:**
-- Complex queries causing high database load
-- Pagination performance problems
-- Graph traversal timeouts
+### Capacity Planning
+- **User Load Estimation**: Understand relationship between concurrent users and database load
+- **Query Pattern Analysis**: Design for common ACM console usage patterns and peak loads
+- **RBAC Overhead Planning**: Account for authentication system load in capacity calculations
+- **Growth Pattern Design**: Plan for logarithmic scaling as cluster fleet size increases
 
-**Diagnostic Commands:**
-```bash
-# Complex query analysis
-kubectl logs -l component=search-api --tail=300 | grep -E "(depth|traversal|recursive|CTE)"
-
-# Pagination and result set performance
-kubectl logs -l component=search-api --tail=200 | grep -E "(limit|offset|pagination|batch)"
-
-# Query builder and SQL generation
-kubectl logs -l component=search-api --tail=200 | grep -E "(goqu|builder|WHERE|JOIN)"
-```
-
-**Optimization Strategies:**
-- [TODO: Add graph traversal depth optimization]
-- [TODO: Add pagination performance tuning]
-- [TODO: Add query complexity analysis and limits]
-
-## Live API Performance Analysis
-
-### GraphQL Query Monitoring
-```bash
-# Active GraphQL operations and performance
-kubectl exec -it $(kubectl get pods -l component=search-api -o name | head -1) -- curl localhost:4000/graphql \
-  -H "Content-Type: application/json" \
-  -d '{"query": "query { __schema { queryType { name } } }"}'
-
-# Query complexity and execution time analysis
-kubectl logs -l component=search-api --tail=500 | grep -E "duration" | sort -k3 -nr | head -10
-```
-
-### RBAC Cache Performance
-```bash
-# RBAC cache hit rates and performance
-kubectl logs -l component=search-api --tail=300 | grep -E "(cache|hit|miss)" | tail -20
-
-# TokenReview API call frequency
-kubectl logs -l component=search-api --tail=200 | grep "TokenReview" | wc -l
-```
-
-### Database Query Analysis
-```bash
-# API-generated SQL query patterns
-kubectl exec -it $(kubectl get pods -l app=postgres -o name | head -1) -- psql -d search -c "
-SELECT substring(query for 100) as query_start, calls, total_time, mean_time
-FROM pg_stat_statements
-WHERE query LIKE '%data->>%' OR query LIKE '%@>%'
-ORDER BY total_time DESC LIMIT 10;"
-```
-
-## Cross-Component Routing
-
-### **Database performance affecting queries** → `/search-indexer`
-- Slow PostgreSQL queries requiring index optimization
-- Connection pool exhaustion from API load
-- JSONB query patterns needing database tuning
-
-### **Missing or stale data** → `/search-collector`
-- Resource discovery issues causing incomplete API results
-- Collector connectivity affecting data freshness
-- Cross-cluster relationship gaps in API responses
-
-### **Deployment and configuration** → `/search-operator`
-- API pod deployment and scaling configuration
-- Service exposure and load balancing setup
-- RBAC policy configuration for API access
-
-### **Overall system performance** → `/search-performance`
-- API scaling decisions based on client load
-- GraphQL query performance optimization
-- Client integration performance analysis
-
-## GraphQL Schema & Query Patterns
-
-### Schema Design Patterns
-- **Lazy field resolution**: Efficient data loading only when fields are requested
-- **Multi-input queries**: Batching multiple search requests in single GraphQL call
-- **Recursive relationships**: Graph traversal with configurable depth limits
-- **Flexible filtering**: Dynamic WHERE clause generation from GraphQL inputs
-
-### Query Optimization
-- **Index-friendly patterns**: Property access via `data->>'property'` for string types
-- **JSONB containment**: Efficient filtering using `@>` containment operators
-- **Operator-aware SQL**: String LIKE, numeric casting, JSONB path operations
-- **Permission integration**: RBAC enforcement at SQL generation level
-
-### Performance Monitoring
-- **Query complexity analysis**: Depth limits and field counting
-- **Execution time tracking**: Query-level performance measurement
-- **Cache utilization**: RBAC cache hit rates and effectiveness
-- **Database query patterns**: SQL generation optimization
+### Client Performance Considerations
+- **GraphQL Query Optimization**: Educate clients on efficient query patterns and field selection
+- **Subscription Management**: Design subscription patterns that scale with client connection count
+- **Cache Utilization**: Leverage client-side caching for frequently accessed data
+- **Error Recovery**: Implement graceful degradation for partial service availability scenarios
 
 ---
 
-## TODO: Questions for Enhancement
+## Implementation Details
 
-Please help enhance this skill by answering:
+For specific configuration values, file paths, environment variables, and implementation details, see:
 
-### **1. GraphQL Performance Issues?**
-- What are your most common GraphQL query performance problems?
-- Optimization strategies for complex nested queries?
-- Query complexity limits and depth restrictions you've implemented?
-
-### **2. RBAC & Authentication Patterns?**
-- Common authentication failures and their root causes?
-- RBAC cache optimization strategies for large user bases?
-- TokenReview API performance tuning approaches?
-
-### **3. Client Integration Challenges?**
-- ACM UI integration issues and resolution patterns?
-- API versioning and compatibility strategies?
-- CORS and HTTP configuration best practices?
-
-### **4. Database Query Optimization?**
-- PostgreSQL query patterns that work best with JSONB data?
-- Index strategies for common GraphQL query patterns?
-- Connection pooling optimization for API load?
-
-### **5. Scaling & Load Management?**
-- API horizontal scaling strategies and load balancing?
-- Query rate limiting and throttling approaches?
-- Performance benchmarks for different fleet sizes?
-
-### **6. Graph Traversal & Relationships?**
-- Optimization for complex relationship queries?
-- Recursive CTE performance tuning?
-- Cross-cluster relationship query patterns?
-
-Please update this skill with your API optimization experience and GraphQL performance patterns!
-
----
-
-## Code Analysis & Implementation Details
-
-**[📋 Code Analysis](code-analysis.md)** - Comprehensive source code analysis including:
-- GraphQL schema and resolver patterns
-- RBAC implementation and caching strategies
-- Database query optimization and SQL generation
-- Performance tuning parameters and configuration
-- Error patterns and debugging workflows
-- Client integration and HTTP endpoint details
+**[📋 Code Analysis](code-analysis.md)** - Comprehensive technical implementation guide including:
+- GraphQL schema and resolver implementation patterns
+- RBAC authentication and caching implementation details  
+- Database query optimization and SQL generation specifics
+- Performance tuning parameters and configuration options
+- Error patterns, debugging approaches, and troubleshooting workflows
+- Client integration details and HTTP endpoint specifications

@@ -1,118 +1,198 @@
 # Search-Agent Skills Structure
 
-## Workflow Skills (Primary Entry Points)
+## Architecture Overview
+
+Our skills follow a **separation of concerns** design where:
+- **SKILL.md** = Methodology and domain knowledge  
+- **scripts/** = Implementation and data collection
+- **JSON reports** = Programmatic integration between skills
+
+## Orchestration Layer (Primary Entry Point)
 
 ### search-architecture
-**Purpose**: Multi-cluster architecture overview with live fleet composition
-**MCP Integration**: Fleet size, resource distribution, cluster status
-**kubectl Integration**: Component health, deployment topology
-**When to use**: Understanding system design, onboarding, architecture questions
+**Purpose**: Intelligent orchestrator - routes symptoms, coordinates assessments, synthesizes insights
+**Implementation**: 
+- `scripts/orchestrate-assessment.sh` - Smart assessment routing based on symptoms
+- `scripts/correlate-results.sh` - Cross-impact analysis and pattern recognition  
+- `scripts/route-symptoms.sh` - Symptom-based routing guidance
+**Integration**: Coordinates all impact skills and provides architectural reasoning
+**When to use**: System-wide analysis, complex performance issues, architectural guidance
 
-### analyze-search-issue
-**Purpose**: Complete issue analysis workflow with customer impact + internal diagnostics
-**MCP Integration**: Customer workload health, policy compliance, fleet context
-**kubectl Integration**: Component status, logs, events, resource usage
-**When to use**: Bug reports, performance issues, customer escalations
+## Impact Assessment Skills (Specialized Analysis)
 
-### evaluate-search-feature
-**Purpose**: Feature evaluation with usage patterns + technical impact assessment
-**MCP Integration**: Usage analytics, fleet composition, growth patterns
-**kubectl Integration**: Current system capacity and performance baselines
-**When to use**: JIRA feature analysis, epic planning, roadmap decisions
+### search-api-impact
+**Purpose**: GraphQL query latency, RBAC load, response time degradation assessment
+**Implementation**: Modular scripts with Prometheus metrics + health endpoint analysis
+**Focus**: API performance, authentication overhead, client patterns, WebSocket health
+**When to use**: Policy deployment events, query slowness, authentication issues
 
-### search-monitoring
-**Purpose**: Dual monitoring - customer health + system health
-**MCP Integration**: Customer workload trends, policy compliance monitoring
-**kubectl Integration**: Component metrics, alerting, capacity monitoring
-**When to use**: Health checks, capacity planning, proactive monitoring
+### search-indexer-impact  
+**Purpose**: Database pressure, batch processing, relationship computation performance assessment
+**Implementation**: Prometheus metrics + comprehensive PostgreSQL diagnostics
+**Focus**: Request processing, database health, capacity utilization, resync patterns
+**When to use**: ManagedCluster events, database issues, ingestion problems
 
-### search-performance
-**Purpose**: Performance analysis with load patterns + bottleneck identification
-**MCP Integration**: System load via resource volume and growth trends
-**kubectl Integration**: Component performance metrics, resource utilization
-**When to use**: Performance issues, optimization planning, capacity decisions
+### search-collector-impact
+**Purpose**: Cross-cluster connection stress, networking, fleet-wide collection performance
+**Implementation**: Connection analysis, resource utilization, cross-cluster latency testing
+**Focus**: Network connectivity, connection pool exhaustion, managed cluster fleet health
+**When to use**: New cluster additions, network issues, collector deployment problems
 
-### search-customer-impact
-**Purpose**: Customer issue analysis with business impact assessment
-**MCP Integration**: Affected workloads, customer fleet analysis, impact scope
-**kubectl Integration**: System status affecting customer experience
-**When to use**: Customer communication, escalation decisions, impact assessment
+### search-operator-impact
+**Purpose**: Reconciliation performance, component deployment, addon management assessment  
+**Implementation**: Controller metrics, deployment analysis, resource consumption tracking
+**Focus**: Operator stability, component lifecycle, ManagedClusterAddOn distribution
+**When to use**: Operator upgrades, component deployment issues, reconciliation delays
 
-## Component Skills (Deep Expertise)
+## Component Expertise Skills (Deep Knowledge)
 
 ### search-indexer
-**Purpose**: PostgreSQL optimization, data ingestion, relationship computation
-**Focus Areas**: Database tuning, write performance, cross-cluster relationships, scaling
-**When to use**: Database issues, ingestion problems, relationship computation errors
-
-### search-collector
-**Purpose**: Resource watching, networking, multi-cluster patterns
-**Focus Areas**: Kubernetes watch optimization, connectivity, heartbeat monitoring
-**When to use**: Resource discovery issues, network problems, collector failures
+**Purpose**: PostgreSQL optimization, batch processing strategies, relationship computation
+**Focus**: Database tuning, write performance, cross-cluster relationships, scaling patterns
+**Integration**: Provides deep expertise for indexer-impact assessments
 
 ### search-api
-**Purpose**: GraphQL performance, RBAC, client integration
-**Focus Areas**: Query optimization, authorization, caching, pagination
-**When to use**: API performance issues, RBAC problems, client integration
+**Purpose**: GraphQL performance patterns, RBAC optimization, client integration strategies  
+**Focus**: Query optimization, authorization patterns, caching, pagination, real-time features
+**Integration**: Provides deep expertise for api-impact assessments
+
+### search-collector
+**Purpose**: Resource watching optimization, networking patterns, multi-cluster architecture
+**Focus**: Kubernetes informers, connectivity patterns, heartbeat monitoring, channel processing
+**Integration**: Provides deep expertise for collector-impact assessments
 
 ### search-operator
-**Purpose**: Lifecycle management, deployment orchestration
-**Focus Areas**: Install/upgrade strategies, configuration management, health orchestration
-**When to use**: Deployment issues, upgrade problems, configuration errors
+**Purpose**: Lifecycle management, deployment orchestration, addon framework integration
+**Focus**: Installation strategies, configuration management, reconciliation patterns
+**Integration**: Provides deep expertise for operator-impact assessments
 
-## Supporting Structure
+## Implementation Architecture
 
-### scripts/
-**Executable helpers that combine multiple data sources**
-- `cluster-health-summary.sh` - MCP + kubectl comprehensive health
-- `performance-snapshot.py` - Live performance analysis
-- `customer-impact-report.sh` - MCP-based impact assessment
-- `fleet-growth-analysis.py` - Resource growth trends
-- `component-status-check.sh` - Cross-component kubectl health
-- `database-health-check.py` - PostgreSQL performance analysis
-
-### docs/
-**Reference documentation linked by skills**
-- `mcp-query-cookbook.md` - Advanced MCP query patterns
-- `kubectl-quick-reference.md` - Essential kubectl by component
-- `troubleshooting-decision-tree.md` - Visual troubleshooting workflow
-- `architecture-diagrams/` - Visual architecture references
-- `performance-benchmarks/` - Known performance characteristics
-
-### examples/
-**Complete workflow walkthroughs**
-- `feature-evaluation-example.md` - Real JIRA evaluation walkthrough
-- `bug-analysis-walkthrough.md` - Complete bug investigation
-- `performance-investigation.md` - Performance issue diagnosis
-- `customer-escalation-example.md` - Customer issue handling
-
-### templates/
-**Reusable templates for common tasks**
-- `feature-analysis-template.md` - Feature evaluation template
-- `bug-report-analysis.md` - Bug analysis template
-- `performance-investigation.md` - Performance issue template
-- `customer-communication.md` - Customer communication templates
-
-## Usage Flow
-
-1. **Start with workflow skills** - They provide structure and route intelligently
-2. **Get live context** - MCP for customer data, kubectl for internal health
-3. **Route to components** - Deep-dive when workflow skills identify component issues
-4. **Reference docs/examples** - Additional patterns and detailed guidance
-5. **Execute scripts** - Complex analysis combining multiple data sources
-
-## Skill Relationships
-
+### Separation of Concerns Pattern
 ```
-analyze-search-issue ──→ search-indexer (DB issues)
-                    ├──→ search-collector (network issues)
-                    ├──→ search-api (query issues)
-                    └──→ search-operator (deployment issues)
-
-evaluate-search-feature ──→ All component skills (impact analysis)
-
-search-architecture ──→ All component skills (deep component details)
-
-search-monitoring ──→ search-performance (detailed analysis)
-                 └──→ search-customer-impact (customer focus)
+SKILL.md (Methodology)  +  scripts/ (Implementation)  =  Complete Skill
+     ↓                           ↓                           ↓
+Domain Knowledge        +   Data Collection        =   Actionable Insights
 ```
+
+### Script Architecture (Per Impact Skill)
+```
+scripts/
+├── generate-assessment.sh      # Main orchestrator
+├── prometheus-metrics.sh       # Core metrics collection  
+├── performance-analysis.sh     # Processing efficiency
+├── [component]-health.sh       # Component-specific health
+└── [specialized].sh           # Domain-specific analysis
+```
+
+### Integration Flow
+```
+User Symptom → search-architecture → Impact Skills → JSON Reports → Correlation → Unified Insights
+```
+
+## Key Architectural Decisions
+
+### **Synchronous vs Asynchronous Data Pipeline**
+- **Reality**: Synchronous push from collector → indexer → database
+- **Impact**: Database pressure cascades to all managed clusters
+- **Assessment Implication**: Cross-component failures are rarely isolated
+
+### **Methodology vs Implementation Separation**  
+- **Choice**: SKILL.md focuses on WHAT and WHY, scripts/ handle HOW
+- **Benefit**: Methodology evolution independent from implementation bugs
+- **Maintainability**: Script improvements don't require skill redefinition
+
+### **Orchestration vs Specialization**
+- **Design**: search-architecture coordinates, impact skills specialize
+- **Pattern**: "Light glue" orchestration with deep component expertise
+- **User Experience**: Single entry point with comprehensive multi-component analysis
+
+## Data Flow and Integration
+
+### Assessment Execution Flow
+1. **Symptom Detection** (`search-architecture`) → Routes to appropriate impact skills
+2. **Specialized Analysis** (Impact skills) → Generate detailed JSON reports
+3. **Cross-Impact Correlation** (`search-architecture`) → Identify patterns and root causes
+4. **Architectural Synthesis** → Unified insights with scaling recommendations
+
+### JSON Integration Schema
+```json
+{
+  "assessment_type": "search-[component]-impact",
+  "confidence_score": 0.0-1.0,
+  "raw_metrics": { /* component-specific metrics */ },
+  "recommendations": [ /* actionable guidance */ ],
+  "execution_audit": { /* transparency for debugging */ }
+}
+```
+
+### Cross-Skill Communication
+- **Programmatic**: JSON reports enable automated correlation
+- **Manual**: Clear routing guidance between skills
+- **Audit Trail**: Complete execution transparency for debugging
+
+## Usage Patterns
+
+### **Full System Assessment**
+```bash
+cd .claude/skills/search-architecture
+./scripts/orchestrate-assessment.sh
+```
+
+### **Symptom-Based Analysis**  
+```bash
+./scripts/route-symptoms.sh api-slow
+./scripts/route-symptoms.sh new-cluster
+./scripts/route-symptoms.sh everything-slow
+```
+
+### **Component-Specific Deep Dive**
+```bash
+cd .claude/skills/search-indexer-impact
+./scripts/generate-assessment.sh
+```
+
+### **Cross-Impact Analysis**
+```bash
+cd .claude/skills/search-architecture  
+./scripts/correlate-results.sh
+```
+
+## Design Benefits
+
+### **Proven Architecture**
+- **Battle-tested**: All components working with real Prometheus integration
+- **Transparent**: Complete audit trails for debugging and validation  
+- **Robust**: Advanced/fallback query patterns handle missing metrics gracefully
+
+### **Scalable Design**
+- **Modular**: Each skill can be improved independently
+- **Composable**: Different assessment combinations for different scenarios
+- **Extensible**: Easy to add new impact skills or correlation patterns
+
+### **User-Focused**  
+- **Intelligent Routing**: Automatically determines appropriate assessments
+- **Unified Interface**: Single entry point for complex multi-component analysis
+- **Actionable Insights**: Focus on recommendations rather than raw data
+
+## Supporting Infrastructure
+
+### **Monitoring Data Structure**
+```
+monitoring_data/
+├── impacts/           # Individual component assessment results
+├── architecture/      # Orchestration and correlation results  
+└── audit/            # Detailed execution logs
+```
+
+### **Prometheus Integration**
+- **Advanced Queries**: PromQL with rate(), histogram_quantile(), complex aggregations
+- **Fallback Patterns**: Basic queries when advanced time-series data unavailable
+- **Error Handling**: Robust JSON parsing with empty response validation
+
+### **Kubernetes Integration**
+- **Multi-source Data**: Combines Prometheus metrics, kubectl, health endpoints
+- **Cross-cluster Analysis**: Fleet-wide assessment capabilities
+- **Resource Monitoring**: Component health, deployment status, resource utilization
+
+This structure reflects our **actual implemented architecture** that has been tested and proven to work with real ACM Search deployments.

@@ -1,0 +1,49 @@
+{
+  "assessment_type": "search-operator-impact",
+  "assessment_scope": "hub",
+  "hub_cluster_name": "local-cluster",
+  "hub_cluster_id": "9e44b1d3-9444-4d88-bc80-d492c40b5667",
+  "hub_openshift_version": "4.21",
+  "assessment_timestamp": "2026-04-21T05:20:02Z",
+  "confidence_score": 0.6,
+  "confidence_level": "MEDIUM",
+  "contributing_factors": [
+    "Reconciliation performance: 0 success indicators",
+    "Addon deployment success rate: 0.0%",
+    "Component health indicators:        1",
+    "Operator restart count: 0"
+  ],
+  "raw_metrics": {
+    "reconciliation_success_indicator": 0,
+    "addon_deployment_success_rate": 0.0,
+    "component_health_count":        1,
+    "operator_restart_count": 0,
+    "metrics_availability": 1.0
+  },
+  "script_execution": {
+    "prometheus_metrics": "completed",
+    "component_deployment_analysis": "completed",
+    "addon_deployment_analysis": "completed",
+    "resource_analysis": "completed"
+  },
+  "execution_audit_trail": {
+    "detailed_log_file": "9e44b1d3-9444-4d88-bc80-d492c40b5667_operator_execution.log",
+    "prometheus_queries_executed": "logged with responses",
+    "component_health_analyzed": "documented",
+    "addon_deployments_assessed": "cross-cluster analysis completed",
+    "resource_consumption_tracked": "current and historical data collected"
+  },
+  "debugging_info": {
+    "metrics_file": "temporary, contains parsed output",
+    "execution_log": "saved separately for audit trail",
+    "query_timestamps": "included in detailed log",
+    "raw_responses": "captured for validation"
+  },
+  "recommendations": [
+    "Review detailed execution log for component-by-component analysis",
+    "Monitor addon deployment success rate trends across fleet growth",
+    "Track operator resource consumption during high reconciliation periods",
+    "Investigate any recurring operator restart patterns"
+  ],
+  "architectural_analysis": "Assessment completed using separated script methodology with comprehensive operator health analysis across reconciliation, deployment, addon, and resource dimensions"
+}

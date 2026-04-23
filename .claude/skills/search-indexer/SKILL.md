@@ -5,27 +5,30 @@ description: ACM Search indexer PostgreSQL optimization, batch processing, relat
 
 # Search Indexer Deep Dive
 
-## Source Code Repository
-**GitHub**: https://github.com/stolostron/search-indexer
+## Purpose
+The ACM Search Indexer serves as the central data processing and storage engine for multi-cluster search capabilities. It receives resource data from search collectors across all managed clusters and processes it into a searchable PostgreSQL database that powers the search API.
 
-### Key Source Files & Patterns
-- **Main indexer logic**: `pkg/indexer/` - PostgreSQL batch processing and relationship computation
-- **Database layer**: `pkg/database/` - Connection pooling, queries, and schema management
-- **Cluster sync**: `pkg/reconciler/` - Collector data processing and hub resource integration
-- **HTTP server**: `pkg/server/` - REST endpoints for collector sync and health checks
-- **Configuration**: `cmd/main.go` - Startup, database connection, and configuration management
+## Role in ACM Search Architecture
 
-### Code Exploration Tips
-- Start with `cmd/main.go` for initialization and database connection setup
-- Review `pkg/indexer/indexer.go` for core batch processing logic
-- Check `pkg/database/` for PostgreSQL interaction patterns
-- Look at `pkg/reconciler/` for collector data integration and hub resource handling
+### Core Responsibilities
+- **Data Ingestion**: Receives batched resource updates from search collectors across all managed clusters
+- **Relationship Computation**: Analyzes resource relationships and builds cross-cluster dependency graphs
+- **Database Management**: Maintains PostgreSQL tables optimized for both storage efficiency and search performance
+- **API Backend**: Provides the data layer that powers GraphQL search queries through the search API
+- **Hub Integration**: Synchronizes hub-level resources (ManagedCluster, policies) with managed cluster data
 
-## Current Indexer Status
-- Database size and health: !`find_resources --outputMode=summary`
-- Recent indexing activity: !`find_resources --ageNewerThan=1h --outputMode=count --groupBy=cluster`
-- Resource growth trends: !`find_resources --ageNewerThan=24h --outputMode=count --groupBy=kind --limit=15`
-- Cross-cluster relationship coverage: !`find_resources --outputMode=count --groupBy=cluster --limit=10`
+### Data Flow Position
+```
+Collectors (managed clusters) → Indexer (hub) → Database → Search API → Users
+```
+
+The indexer is the critical bottleneck in this flow - its performance directly impacts:
+- **Data freshness**: How quickly cluster changes appear in search results
+- **Search performance**: How fast the API can respond to queries
+- **System capacity**: How many clusters and resources the search system can handle
+
+## Optimization Focus
+This skill covers optimization strategies and PostgreSQL scaling patterns for multi-cluster search workloads. Focuses on architectural principles, performance optimization patterns, and scaling strategies independent of specific implementation details.
 
 ## Core Architecture
 
@@ -38,242 +41,104 @@ search.resources (JSONB documents)     search.edges (relationship mappings)
 └─ Property access optimization
 ```
 
-### Technical Implementation
-- **Connection Pooling**: pgxpool with 2-10 connections, 5-minute lifecycle limits
-- **Batch Processing**: 2,500 operations per batch with binary-search retry splitting
-- **Conditional Upserts**: `INSERT ON CONFLICT DO UPDATE WHERE data!=$3` prevents unnecessary writes
-- **In-Memory Caching**: `existingClustersCache` avoids redundant database queries
-- **Concurrency Control**: 25 general concurrent requests, 5 large requests (>20MB)
+### Key Optimization Principles
+- **Connection Pooling Strategy**: Right-size connection pools to match concurrent load patterns without overwhelming PostgreSQL
+- **Batch Processing Design**: Use optimal batch sizes that balance throughput with memory usage and transaction isolation
+- **Conditional Upserts**: Avoid unnecessary database writes by checking data equality before updates
+- **In-Memory Caching**: Cache frequently accessed metadata to reduce database round trips
+- **Request Limiting**: Implement tiered concurrency controls for different request sizes and processing complexity
 
-### Performance Characteristics
-- **Connection Management**: Health checks at `afterConnect()` and `beforeAcquire()` callbacks
-- **Jitter Prevention**: 1-minute connection jitter prevents fleet synchronization issues
-- **Leader Election**: Kubernetes-native single-instance processing prevents data conflicts
-- **Exponential Backoff**: Max 5-minute backoff with configurable `MaxBackoffMS`
+### Performance Patterns
+- **Connection Lifecycle Management**: Balance connection reuse with resource cleanup through appropriate lifecycle limits
+- **Fleet Synchronization Prevention**: Add jitter to prevent all collectors from hitting the database simultaneously
+- **Single-Writer Architecture**: Use leader election for stateful operations that require consistency across the cluster
+- **Graceful Backoff**: Implement exponential backoff with reasonable limits to handle temporary database pressure
 
-## Common Issues & Solutions
+## Optimization Strategies
 
-### Database Performance Problems
-**Symptoms:**
-- Slow write performance during peak sync
-- Connection pool exhaustion
-- Query timeouts from API layer
+### Database Performance Optimization
+**Common Problems:**
+- Write performance degradation during peak synchronization periods
+- Connection pool exhaustion under concurrent load
+- Query timeouts affecting API layer responsiveness
 
-**Diagnostic Commands:**
-```bash
-# Indexer pod status and resource usage
-kubectl get pods -l component=search-indexer -o wide
-kubectl top pods -l component=search-indexer
+**Optimization Patterns:**
+- **Index Strategy**: Use GIN indexes for JSONB search patterns, B-tree indexes for cluster-based queries
+- **Connection Pool Sizing**: Balance pool size with PostgreSQL max_connections and expected concurrent load
+- **Query Optimization**: Structure queries to leverage prepared statements and index scan patterns
+- **Write Batching**: Group related operations to minimize transaction overhead
 
-# Database connection and performance metrics
-kubectl exec -it $(kubectl get pods -l app=postgres -o name | head -1) -- psql -c "
-SELECT datname, numbackends, xact_commit, xact_rollback, blks_read, blks_hit,
-       temp_files, temp_bytes, deadlocks, conflicts
-FROM pg_stat_database WHERE datname = 'search';"
+### Batch Processing Optimization
+**Common Problems:**
+- Memory pressure from large batch operations
+- Processing timeouts during cluster synchronization
+- Retry storms causing cascading failures
 
-# Connection pool status and active queries
-kubectl exec -it $(kubectl get pods -l app=postgres -o name | head -1) -- psql -c "
-SELECT state, count(*) FROM pg_stat_activity WHERE datname = 'search' GROUP BY state;"
+**Optimization Patterns:**
+- **Adaptive Batch Sizing**: Adjust batch sizes based on resource complexity and available memory
+- **Binary Search Recovery**: When batches fail, use binary search to identify optimal sub-batch sizes
+- **Memory Management**: Implement garbage collection triggers for large processing operations
+- **Graceful Degradation**: Reduce batch sizes automatically under resource pressure
 
-# Table sizes and index usage
-kubectl exec -it $(kubectl get pods -l app=postgres -o name | head -1) -- psql -d search -c "
-SELECT schemaname, tablename, pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size
-FROM pg_tables WHERE schemaname = 'search';"
-```
+### Relationship Computation Optimization
+**Common Problems:**
+- Missing or inconsistent cross-cluster relationships
+- Slow graph traversal for complex relationship queries
+- Edge computation latency affecting search performance
 
-**Common Causes:**
-- [TODO: Add PostgreSQL tuning parameters for search workload]
-- [TODO: Add index optimization strategies]
-- [TODO: Add connection pool sizing recommendations]
+**Optimization Patterns:**
+- **Incremental Computation**: Only recompute relationships for changed resources
+- **Edge Caching**: Cache computed relationships to avoid redundant calculations
+- **Parallel Processing**: Compute relationships concurrently for independent resource sets
+- **Consistency Validation**: Regular verification of resource-edge data alignment
 
-### Batch Processing Issues
-**Symptoms:**
-- Sync failures from collectors
-- High memory usage during large batch processing
-- Timeout errors in indexer logs
+## Integration Considerations
 
-**Diagnostic Commands:**
-```bash
-# Indexer batch processing logs
-kubectl logs -l component=search-indexer --tail=200 | grep -E "(batch|processing|upsert|conflict)"
+### **Impact on API Performance**
+- Database query patterns directly affect GraphQL response times
+- Connection pool exhaustion cascades to API layer availability
+- Index optimization strategies should align with common search patterns
 
-# Memory usage and garbage collection patterns
-kubectl logs -l component=search-indexer --tail=100 | grep -E "(memory|GC|heap)"
+### **Collector Synchronization Dependencies**
+- Batch processing capabilities determine collector sync success rates
+- Request limiting affects collector backoff and retry patterns
+- Network optimization impacts cross-cluster data synchronization
 
-# Failed batch operations and retries
-kubectl logs -l component=search-indexer --tail=500 | grep -E "(error|retry|timeout|failed)"
-```
-
-**Performance Tuning:**
-- [TODO: Add batch size optimization based on cluster scale]
-- [TODO: Add retry strategy configuration]
-- [TODO: Add memory management patterns for large syncs]
-
-### Relationship Computation Problems
-**Symptoms:**
-- Missing cross-cluster relationships in search results
-- Inconsistent edge data between resources and edges tables
-- Slow graph traversal queries
-
-**Diagnostic Commands:**
-```bash
-# Check relationship computation logs
-kubectl logs -l component=search-indexer --tail=300 | grep -E "(edge|relationship|graph|compute)"
-
-# Validate relationship data consistency
-kubectl exec -it $(kubectl get pods -l app=postgres -o name | head -1) -- psql -d search -c "
-SELECT 'Resources' as table, count(*) as count FROM search.resources
-UNION SELECT 'Edges' as table, count(*) as count FROM search.edges;"
-
-# Cross-cluster relationship distribution
-kubectl exec -it $(kubectl get pods -l app=postgres -o name | head -1) -- psql -d search -c "
-SELECT edgetype, count(*) FROM search.edges GROUP BY edgetype ORDER BY count DESC;"
-```
-
-**Analysis Patterns:**
-- [TODO: Add relationship consistency validation queries]
-- [TODO: Add cross-cluster relationship troubleshooting]
-- [TODO: Add edge computation performance optimization]
-
-### Hub Resource Integration Issues
-**Symptoms:**
-- Missing ManagedCluster, ManagedClusterInfo resources
-- Inconsistent hub vs managed cluster data
-- Stale hub resource information
-
-**Diagnostic Commands:**
-```bash
-# Hub informer status and recent activity
-kubectl logs -l component=search-indexer --tail=200 | grep -E "(hub|informer|ManagedCluster)"
-
-# Hub vs collector data consistency
-kubectl get managedclusters --no-headers | wc -l  # Hub count
-# Compare with: !`find_resources --kind=ManagedCluster --outputMode=count`
-
-# Recent hub resource updates
-kubectl get events --field-selector involvedObject.kind=ManagedCluster --sort-by=.lastTimestamp | tail -10
-```
-
-**Integration Patterns:**
-- [TODO: Add hub informer troubleshooting patterns]
-- [TODO: Add managed cluster lifecycle handling]
-- [TODO: Add hub resource sync validation]
-
-## Live Database Analysis
-
-### Performance Monitoring
-```bash
-# Database query performance analysis
-kubectl exec -it $(kubectl get pods -l app=postgres -o name | head -1) -- psql -d search -c "
-SELECT query, calls, total_time, mean_time, rows
-FROM pg_stat_statements
-WHERE query LIKE '%search.resources%' OR query LIKE '%search.edges%'
-ORDER BY total_time DESC LIMIT 10;"
-
-# Index usage and effectiveness
-kubectl exec -it $(kubectl get pods -l app=postgres -o name | head -1) -- psql -d search -c "
-SELECT schemaname, tablename, indexname, idx_tup_read, idx_tup_fetch
-FROM pg_stat_user_indexes WHERE schemaname = 'search';"
-```
-
-### Capacity Planning
-```bash
-# Database growth trends
-kubectl exec -it $(kubectl get pods -l app=postgres -o name | head -1) -- psql -d search -c "
-SELECT
-  COUNT(*) as total_resources,
-  COUNT(DISTINCT cluster) as clusters,
-  AVG(LENGTH(data::text)) as avg_document_size
-FROM search.resources;"
-
-# Connection pool utilization
-kubectl logs -l component=search-indexer --tail=100 | grep -E "(connection|pool|acquire)"
-```
-
-## Cross-Component Routing
-
-### **Database performance affecting API** → `/search-api`
-- Slow queries impacting GraphQL response times
-- Connection pool exhaustion affecting API availability
-- Index optimization needed for common query patterns
-
-### **Collector sync failures** → `/search-collector`
-- HTTP sync timeouts or connection issues
-- Batch processing rejections causing collector backoff
-- Network connectivity problems between collectors and indexer
-
-### **Hub resource integration** → `/search-operator`
-- ManagedCluster informer configuration issues
-- Addon status not reflecting indexer health
-- Leader election problems affecting hub resource processing
-
-### **System scaling decisions** → `/search-performance`
-- Database scaling based on fleet growth
-- Connection pool sizing for cluster count
-- Performance optimization strategies for large deployments
+### **Hub Resource Integration**
+- Leader election design affects hub resource processing consistency
+- Informer patterns determine managed cluster data freshness
+- Resource reconciliation strategies impact overall search completeness
 
 ## Scaling & Optimization Strategies
 
 ### Database Scaling Patterns
-- **Vertical scaling**: CPU and memory optimization for PostgreSQL workload
-- **Connection pooling**: Optimal pool sizing based on concurrent collectors
-- **Index strategy**: GIN vs B-tree optimization for hybrid workload
-- **Partitioning**: Strategies for very large resource datasets
+- **Vertical Scaling**: Scale PostgreSQL resources based on write-heavy workload characteristics
+- **Connection Pool Design**: Size pools to balance concurrency with database connection limits  
+- **Index Strategy**: Choose between GIN indexes for flexible search and B-tree indexes for structured queries
+- **Partitioning**: Consider table partitioning strategies for very large multi-cluster deployments
 
-### Performance Tuning
-- **Batch size optimization**: 2,500 operations vs smaller/larger batches
-- **Connection lifecycle**: 5-minute vs longer connection lifetimes
-- **Jitter configuration**: Connection timing to prevent fleet synchronization
-- **Memory management**: Go GC tuning for batch processing workloads
+### Performance Tuning Approaches
+- **Adaptive Batch Sizing**: Tune batch sizes based on cluster scale and resource complexity
+- **Connection Lifecycle Management**: Balance connection reuse with resource cleanup requirements
+- **Fleet Coordination**: Implement jitter and backoff to prevent synchronized load patterns
+- **Memory Management**: Optimize garbage collection timing for batch processing workloads
 
----
-
-## TODO: Questions for Enhancement
-
-Please help enhance this skill by answering:
-
-### **1. Database Performance Issues?**
-- What are your most common PostgreSQL performance problems with search indexer?
-- Query optimization patterns you've implemented?
-- Connection pool sizing strategies based on fleet size?
-
-### **2. Batch Processing Patterns?**
-- How do you tune batch sizes for different cluster scales?
-- Memory management strategies for large batch processing?
-- Retry and error handling patterns for failed batches?
-
-### **3. Scaling Strategies?**
-- How do you scale the indexer for large fleets (100+ clusters)?
-- Database partitioning or sharding strategies you've considered?
-- Performance benchmarks and capacity planning approaches?
-
-### **4. Relationship Computation?**
-- Common issues with cross-cluster relationship computation?
-- Performance optimization for graph traversal queries?
-- Consistency validation and troubleshooting approaches?
-
-### **5. Hub Resource Integration?**
-- Hub informer configuration and optimization patterns?
-- ManagedCluster lifecycle handling best practices?
-- Leader election issues and resolution strategies?
-
-### **6. Monitoring & Diagnostics?**
-- Key PostgreSQL metrics you monitor for search workload?
-- Alerting thresholds for indexer performance?
-- Log analysis patterns for troubleshooting indexer issues?
-
-Please update this skill with your operational experience and database optimization patterns!
+### Capacity Planning
+- **Load Estimation**: Understand relationship between cluster count, resource density, and database load
+- **Growth Patterns**: Design for logarithmic growth in relationship computation as fleet size increases
+- **Resource Requirements**: Plan CPU, memory, and storage based on write-heavy workload patterns
+- **Monitoring Strategy**: Establish baselines for normal operation to detect scaling needs early
 
 ---
 
-## Code Analysis & Implementation Details
+## Implementation Details
 
-**[📋 Code Analysis](code-analysis.md)** - Comprehensive source code analysis including:
-- PostgreSQL connection pooling and database patterns
-- Batch processing implementation and optimization
-- Configuration options and performance tuning
-- Error patterns and troubleshooting guidance
-- Component deployment and scaling strategies
-- Integration interfaces and API endpoints
+For specific configuration values, file paths, environment variables, and implementation details, see:
 
-*Note: This code analysis is currently a placeholder and needs completion for the indexer repository.*
+**[📋 Code Analysis](code-analysis.md)** - Comprehensive technical implementation guide including:
+- PostgreSQL connection pooling configuration and tuning
+- Batch processing implementation with specific parameters  
+- Environment variables and configuration options
+- Error patterns, debugging approaches, and troubleshooting
+- Deployment configuration and resource requirements
+- API endpoints, metrics, and integration interfaces

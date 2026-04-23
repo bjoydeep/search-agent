@@ -1,284 +1,168 @@
 ---
 name: search-collector
-description: ACM Search collector architecture, networking, performance, and cross-cluster troubleshooting
+description: ACM Search collector architecture, networking patterns, cross-cluster optimization, and channel-based processing strategies
 ---
 
 # Search Collector Deep Dive
 
-## Source Code Repository
-**GitHub**: https://github.com/stolostron/search-collector
+## Purpose
+The ACM Search Collector serves as the distributed data collection engine for multi-cluster search capabilities. It runs on managed clusters to discover, process, and transmit resource information to the search indexer on the hub cluster.
 
-### Key Source Files & Patterns
-- **Main collector logic**: `pkg/collector/` - Core resource watching and processing
-- **Graph relationships**: `pkg/transforms/` - Resource relationship computation
-- **Network sync**: `pkg/send/` - HTTP sync to hub indexer
-- **Configuration**: `cmd/collector/` - Startup and configuration management
-- **Deployment manifests**: `deploy/` - Kubernetes manifests for addon deployment
+## Role in ACM Search Architecture
 
-### Code Exploration Tips
-- Start with `cmd/collector/main.go` for initialization flow
-- Review `pkg/collector/controller.go` for main processing loop
-- Check `pkg/transforms/` for relationship computation logic
-- Look at `pkg/send/sender.go` for hub communication patterns
+### Core Responsibilities
+- **Dynamic Resource Discovery**: Uses GenericInformer patterns to discover all Kubernetes resources without static configuration
+- **Relationship Computation**: Analyzes resource ownership, attachments, and deployment relationships across cluster resources
+- **Cross-Cluster Communication**: Manages secure HTTP/TLS transmission to hub cluster search indexer
+- **Event Processing**: Transforms Kubernetes watch events into search-optimized resource representations
+- **Fleet Integration**: Operates as a distributed component across all managed clusters in the ACM fleet
 
-## Current Collector Fleet Status
-- Active collectors: !`find_resources --kind=ManagedCluster --outputMode=count --groupBy=status`
-- Recent collector issues: !`find_resources --kind=ManagedCluster --status=NotReady,Unknown --ageNewerThan=2h`
-- Resource sync activity: !`find_resources --ageNewerThan=1h --outputMode=count --groupBy=cluster --limit=10`
-- Fleet resource distribution: !`find_resources --outputMode=summary`
+### Data Flow Position
+```
+K8s APIs (managed cluster) → Collector → Network → Indexer (hub) → Database → API
+```
+
+The collector is the distributed entry point in this flow - its performance directly impacts:
+- **Data freshness**: How quickly cluster changes appear in search results
+- **Fleet capacity**: How many clusters the search system can handle
+- **Network efficiency**: Cross-cluster bandwidth and connection usage
+- **Hub load**: Processing pressure on centralized indexer and database
+
+## Optimization Focus
+This skill covers collector architecture, channel-based processing patterns, cross-cluster networking optimization, and scaling strategies for multi-cluster environments. Focuses on architectural principles and optimization patterns independent of specific implementation details.
 
 ## Core Architecture
 
 ### Channel-Based Processing Pipeline
 ```
 K8s Watch APIs → transformChannel → transformer workers → reconciler.Input → sender → HTTP/TLS → Indexer
-      ↓              ↓                    ↓                    ↓           ↓
-  Dynamic Resource   Go Channels      runtime.NumCPU()    Batch Queue   Exponential
-   Discovery       (Async Buffer)    Worker Goroutines   Processing     Backoff
+     ↓              ↓                    ↓                    ↓           ↓
+ Dynamic Resource   Go Channels      runtime.NumCPU()    Batch Queue   Exponential
+  Discovery       (Async Buffer)    Worker Goroutines   Processing     Backoff
 ```
 
-### Technical Implementation
-- **Dynamic Resource Discovery**: Uses `GenericInformer` rather than static configuration
-- **Concurrency Model**: `runtime.NumCPU()` transformer goroutines for efficient processing
-- **Memory Optimization**: `GOGC=25` for aggressive garbage collection in resource-constrained environments
-- **Graph Data Model**: 5 relationship types: `ownedBy`, `attachedTo`, `runsOn`, `generatedBy`, `mutatedBy`
-- **Failure Resilience**: LRU cache prevents out-of-order event corruption during network instability
+### Key Optimization Principles
+- **CPU-Scaled Concurrency**: Worker goroutines scale with `runtime.NumCPU()` for efficient resource utilization
+- **Memory-Aggressive GC**: `GOGC=25` setting for resource-constrained managed cluster environments
+- **Asynchronous Processing**: Channel-based pipeline prevents blocking between discovery, transformation, and transmission
+- **Differential State Tracking**: Complete vs incremental state management for network efficiency
+- **Failure Resilience**: LRU cache and out-of-order event protection during network instability
 
-### Synchronization Patterns
-- **Dual State Management**: Complete state + differential state for recovery and efficiency
-- **Sync Modes**: Incremental updates (5 operation types) vs Full resync (complete state replacement)
-- **Timing**: 5-second report rate, 5-minute heartbeat, 5-minute HTTP timeout
-- **Network Handling**: 600-second max exponential backoff with jitter for HTTP transmission
+### Performance Patterns
+- **Paginated Discovery**: 250-resource chunks prevent memory spikes during initial cluster scanning
+- **Dynamic Resource Coverage**: GenericInformer approach supports new CRDs without collector updates
+- **Relationship Graph Building**: 5 edge types (`ownedBy`, `attachedTo`, `runsOn`, `generatedBy`, `mutatedBy`) for comprehensive topology
+- **Connection Management**: TLS 1.2+ with proper certificate handling for cross-cluster security
 
-## Common Issues & Solutions
+## Optimization Strategies
 
-### Resource Discovery Problems
-**Symptoms:**
-- Missing resources in search results
-- Inconsistent resource counts between clusters
-- New resource types not appearing
+### Processing Pipeline Optimization
+**Common Problems:**
+- High CPU usage during large cluster discovery
+- Memory pressure from resource accumulation
+- Processing delays affecting data freshness
 
-**Diagnostic Commands:**
-```bash
-# Check collector pod status and resource usage
-kubectl get pods -l component=search-collector -o wide
-kubectl top pods -l component=search-collector
+**Optimization Patterns:**
+- **Worker Thread Scaling**: Match goroutine count to CPU cores for optimal concurrency
+- **Channel Buffer Sizing**: Right-size async buffers to prevent blocking without excessive memory
+- **Memory Management**: Aggressive garbage collection tuning for memory-constrained environments
+- **Batch Processing**: Group operations to minimize overhead while maintaining responsiveness
 
-# Collector logs for resource discovery issues
-kubectl logs -l component=search-collector --tail=100 | grep -E "(discovery|informer|watch)"
+### Cross-Cluster Networking Optimization
+**Common Problems:**
+- High network overhead from frequent transmissions
+- Connection failures affecting data reliability
+- TLS handshake overhead for secure communication
 
-# Check resource types being watched
-kubectl logs -l component=search-collector --tail=500 | grep -E "(GenericInformer|api-resources)"
-```
+**Optimization Patterns:**
+- **Differential Transmission**: Send only changes after initial complete sync to minimize bandwidth
+- **Exponential Backoff**: Graceful handling of network instability with jitter to prevent storms
+- **Connection Reuse**: Maintain persistent connections while handling certificate rotation
+- **Payload Optimization**: Efficient JSON serialization with minimal overhead
 
-**Common Causes:**
-- [TODO: Add specific resource discovery failure patterns you've seen]
-- [TODO: Add RBAC issues that prevent resource watching]
-- [TODO: Add cluster-specific resource type limitations]
+### Resource Discovery Optimization
+**Common Problems:**
+- Slow initial cluster scanning affecting time-to-visibility
+- Missing new resource types without collector updates
+- RBAC limitations preventing complete cluster visibility
 
-### Network Connectivity Issues
-**Symptoms:**
-- Collector heartbeat failures
-- Sync timeouts to hub indexer
-- HTTP/TLS connection errors
+**Optimization Patterns:**
+- **Informer Pattern**: Use watch streams rather than polling for efficient change detection
+- **Dynamic Type Discovery**: GenericInformer supports CRDs without static configuration
+- **Cache Management**: UID-based versioning for efficient state reconciliation
+- **Permission Design**: Minimal RBAC requirements while maintaining complete visibility
 
-**Diagnostic Commands:**
-```bash
-# Check collector connectivity to hub
-kubectl get managedclusteraddons search -A -o custom-columns="CLUSTER:.metadata.namespace,STATUS:.status.conditions[-1].type,REASON:.status.conditions[-1].reason,MESSAGE:.status.conditions[-1].message"
+### Memory and Resource Optimization
+**Common Problems:**
+- Collector pods being OOMKilled on resource-constrained clusters
+- High memory usage affecting other cluster workloads
+- CPU spikes during processing intensive operations
 
-# Network connectivity from collector perspective
-kubectl exec -it $(kubectl get pods -l component=search-collector -o name | head -1) -- nslookup search-indexer.open-cluster-management.svc.cluster.local
+**Optimization Patterns:**
+- **Garbage Collection Tuning**: Aggressive GOGC settings for memory-constrained environments
+- **Resource Limit Planning**: Right-size container limits based on cluster scale and complexity
+- **Processing Rate Control**: Balance event processing speed with resource consumption
+- **Cache Size Management**: LRU cache sizing to prevent unbounded memory growth
 
-# Check TLS/HTTP sync errors
-kubectl logs -l component=search-collector --tail=100 | grep -E "(HTTP|TLS|timeout|connection)"
-```
+## Integration Considerations
 
-**Common Causes:**
-- [TODO: Add network policy blocking issues]
-- [TODO: Add proxy configuration problems]
-- [TODO: Add certificate/TLS handshake failures]
+### **Impact on Indexer Performance**
+- Processing efficiency directly affects indexer request patterns
+- Network transmission patterns determine indexer batch processing load
+- Connection management affects indexer connection pool utilization
 
-### Performance & Scaling Issues
-**Symptoms:**
-- High CPU/memory usage on managed clusters
-- Slow resource processing
-- Collector pods being OOMKilled
+### **Managed Cluster Dependencies**
+- Kubernetes API server load increases with collector discovery patterns
+- RBAC configuration determines scope of resource visibility
+- Network policies and proxy configuration affect hub connectivity
 
-**Diagnostic Commands:**
-```bash
-# Resource usage analysis
-kubectl top pods -l component=search-collector --sort-by=cpu
-kubectl top pods -l component=search-collector --sort-by=memory
+### **Cross-Cluster Networking Requirements**
+- TLS certificate management for secure communication
+- Network routing and firewall configuration for hub access
+- Proxy configuration for enterprise environments
 
-# Processing performance metrics
-kubectl logs -l component=search-collector --tail=200 | grep -E "(batch|processing|goroutine|GOGC)"
+### **Fleet Scaling Characteristics**
+- Linear increase in network traffic with cluster count
+- Connection management becomes critical at scale
+- Certificate rotation coordination across distributed fleet
 
-# Check for resource limits and requests
-kubectl get pods -l component=search-collector -o jsonpath='{.items[*].spec.containers[*].resources}'
-```
+## Scaling & Optimization Strategies
 
-**Performance Tuning:**
-- Worker goroutine scaling (`runtime.NumCPU()`)
-- Memory optimization (`GOGC=25`)
-- Channel buffer sizing for async processing
-- [TODO: Add resource limit recommendations based on cluster size]
-- [TODO: Add performance tuning based on resource types/volume]
+### Horizontal Scaling Patterns
+- **Fleet Distribution**: Design for efficient resource utilization across many managed clusters
+- **Processing Load**: Balance discovery intensity with cluster resource constraints
+- **Network Coordination**: Prevent simultaneous transmission storms across fleet
+- **State Management**: Handle collector restarts and network partitions gracefully
 
-### Heartbeat & Health Monitoring
-**Symptoms:**
-- Collector showing as unhealthy in addon status
-- Intermittent connectivity reports
-- Stale heartbeat timestamps
+### Performance Tuning Approaches
+- **CPU Optimization**: Match worker threads to available cores for optimal processing
+- **Memory Optimization**: Tune garbage collection for managed cluster memory constraints
+- **Network Efficiency**: Optimize transmission patterns to minimize cross-cluster bandwidth
+- **Discovery Rate**: Balance resource freshness with cluster API server impact
 
-**Diagnostic Commands:**
-```bash
-# Collector health and heartbeat status
-kubectl get managedclusteraddons search -A -o yaml | grep -A10 -B5 "heartbeat\|health"
+### Capacity Planning
+- **Cluster Scale Estimation**: Understand relationship between cluster size and collector resource requirements
+- **Network Bandwidth Planning**: Account for cross-cluster data transmission patterns
+- **Resource Constraint Design**: Plan for resource-limited managed cluster environments
+- **Growth Pattern Analysis**: Design for logarithmic scaling as fleet size increases
 
-# Recent collector events and errors
-kubectl get events --field-selector involvedObject.kind=ManagedClusterAddOn --sort-by=.lastTimestamp | tail -20
-
-# Addon framework health
-kubectl get klusterletaddonconfigs -A | grep search
-```
-
-**Common Patterns:**
-- [TODO: Add heartbeat failure patterns]
-- [TODO: Add addon framework issues]
-- [TODO: Add lease management problems]
-
-## Live Fleet Diagnostics
-
-### Cross-Cluster Health Overview
-```bash
-# Get all collector pod status across clusters
-# [TODO: Add multi-cluster kubectl commands for fleet-wide status]
-
-# Compare resource sync rates across clusters
-# [TODO: Add commands to compare cluster sync performance]
-
-# Identify problematic clusters
-# [TODO: Add pattern matching for common cluster issues]
-```
-
-### Performance Analysis
-```bash
-# Resource processing rates by cluster
-kubectl logs -l component=search-collector --tail=500 | grep -E "processed.*resources" | sort
-
-# Network latency to hub indexer
-kubectl exec -it $(kubectl get pods -l component=search-collector -o name | head -1) -- curl -w "@{time_total: %{time_total}}\n" -o /dev/null -s http://search-indexer:3010/healthz
-```
-
-### Graph Relationship Analysis
-```bash
-# Check relationship computation logs
-kubectl logs -l component=search-collector --tail=200 | grep -E "(ownedBy|attachedTo|runsOn|generatedBy|mutatedBy)"
-
-# Validate relationship consistency
-# [TODO: Add commands to verify relationship graph integrity]
-```
-
-## Cross-Component Routing
-
-### **Network/sync issues affecting indexer** → `/search-indexer`
-- HTTP sync timeouts, connection pooling problems
-- Batch processing failures at indexer level
-- PostgreSQL write performance impact
-
-### **Addon deployment/lifecycle problems** → `/search-operator`
-- ManagedClusterAddOn configuration issues
-- Addon framework integration problems
-- Collector pod deployment failures
-
-### **Resource discovery affecting API queries** → `/search-api`
-- Missing resources causing query inconsistencies
-- Relationship data gaps affecting GraphQL traversal
-- RBAC issues with cross-cluster resource visibility
-
-### **Performance impact on platform** → `/search-performance`
-- Collector resource usage affecting cluster performance
-- Network overhead impacting other workloads
-- Scaling decisions based on collector metrics
-
-## Troubleshooting Decision Tree
-
-```
-Collector Issue?
-├─ Resource Discovery Problem?
-│  ├─ Check pod status + RBAC + logs
-│  └─ Verify GenericInformer configuration
-├─ Network Connectivity?
-│  ├─ Check addon status + TLS logs
-│  └─ Test hub connectivity + proxy config
-├─ Performance Issue?
-│  ├─ Check resource usage + limits
-│  └─ Analyze processing rates + GOGC
-└─ Health/Heartbeat?
-   ├─ Check addon framework status
-   └─ Verify lease management + events
-```
-
-## Advanced Configuration
-
-### Deployment Modes
-- **Hub deployment**: Direct TLS connection to indexer
-- **Managed cluster deployment**: Proxy via kubeconfig through addon framework
-- **Lease-based health monitoring**: Kubernetes-native heartbeat via addon status
-
-### Failure Handling Patterns
-- **Exponential backoff**: 600s max with jitter for HTTP retries
-- **Context cancellation**: Graceful shutdown via `getMainContext()` propagation
-- **Dual-signal shutdown**: First signal graceful, second signal forced exit
-- **Out-of-order protection**: LRU cache prevents event corruption
+### Cross-Cluster Architecture Considerations
+- **Hub Connectivity**: Design for reliable cross-cluster network communication
+- **Certificate Management**: Handle distributed TLS certificate lifecycle
+- **Network Partitioning**: Graceful handling of managed cluster isolation scenarios
+- **Fleet Coordination**: Prevent synchronized behavior that could overwhelm hub components
 
 ---
 
-## TODO: Questions for Enhancement
+## Implementation Details
 
-Please help enhance this skill by answering:
+For specific configuration values, file paths, environment variables, and implementation details, see:
 
-### **1. Most Common Collector Issues?**
-- What are your top 3-5 collector problems you deal with regularly?
-- Network problems? Resource discovery? Performance? Heartbeat failures?
-- Any patterns by cluster type, version, or cloud provider?
-
-### **2. Troubleshooting Workflows?**
-- What kubectl commands do you run first when collector issues are reported?
-- What logs do you check and what patterns do you look for?
-- How do you isolate network vs resource discovery vs performance issues?
-
-### **3. Cross-Cluster Patterns?**
-- Do you see consistent issues across certain cluster types?
-- Special cases: SNO (Single Node OpenShift), disconnected clusters, specific clouds?
-- How do you handle fleet-wide collector updates or configuration changes?
-
-### **4. Performance Characteristics?**
-- What resource usage (CPU/memory) is normal vs concerning?
-- How do you tune collector performance based on cluster size?
-- Resource limit recommendations for different cluster profiles?
-
-### **5. Network & Security Patterns?**
-- Common network policy issues blocking collector connectivity?
-- Proxy configuration problems in enterprise environments?
-- Certificate/TLS issues and resolution patterns?
-
-### **6. Addon Framework Integration?**
-- Common addon deployment failures and their causes?
-- How do you troubleshoot addon framework issues?
-- Lease management and health reporting problems?
-
-Please update this skill with your operational experience and real-world patterns!
-
----
-
-## Code Analysis & Implementation Details
-
-**[📋 Code Analysis](code-analysis.md)** - Comprehensive source code analysis including:
-- File navigation and structure
-- Configuration options and environment variables
+**[📋 Code Analysis](code-analysis.md)** - Comprehensive technical implementation guide including:
+- Source file navigation and package organization
+- Configuration options and environment variables  
 - Channel architecture and Go concurrency patterns
-- Performance parameters and optimization settings
-- Error patterns and debugging guidance
+- Network implementation and TLS security settings
+- Performance parameters and resource optimization
+- Error patterns, debugging approaches, and troubleshooting
 - Integration interfaces and API details

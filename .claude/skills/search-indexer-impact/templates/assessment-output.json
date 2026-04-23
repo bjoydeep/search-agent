@@ -1,0 +1,76 @@
+{
+  "assessment_type": "search-indexer-impact",
+  "assessment_scope": "hub",
+  "hub_cluster_name": "local-cluster",
+  "hub_cluster_id": "${HUB_CLUSTER_ID}",
+  "hub_openshift_version": "${HUB_OCP_VERSION}",
+  "assessment_timestamp": "${TIMESTAMP}",
+  "confidence_score": 0.0,
+  "confidence_level": "UNKNOWN",
+  "contributing_factors": [
+    "Request duration: ${AVG_DURATION}s average",
+    "Error rate: ${ERROR_RATE}%",
+    "Capacity utilization: ${CAPACITY_UTIL}%",
+    "Request size trend: ${REQUEST_SIZE_TREND}",
+    "Metrics availability: ${METRICS_AVAIL}%"
+  ],
+  "raw_metrics": {
+    "avg_request_duration_seconds": 0.0,
+    "error_rate_percent": 0.0,
+    "capacity_utilization_percent": 0.0,
+    "request_size_trend": 0.0,
+    "metrics_availability": 1.0,
+    "current_requests_in_flight": 0,
+    "total_requests_processed": 0,
+    "indexer_metrics": {
+      "request_count_by_cluster": {},
+      "error_breakdown": {},
+      "request_size_distribution": {
+        ">100k_changes": 0,
+        "25k-100k_changes": 0,
+        "10k-25k_changes": 0,
+        "<10k_changes": 0
+      },
+      "request_duration_metrics": {
+        "total_duration_sum_seconds": 0.0,
+        "total_duration_count": 0,
+        "average_duration_seconds": 0.0
+      },
+      "capacity_metrics": {
+        "current_in_flight": 0,
+        "max_concurrent_limit": 25,
+        "capacity_utilization_percent": 0.0
+      },
+      "prometheus_integration": {
+        "metrics_accessible": false,
+        "prometheus_pod": "",
+        "prometheus_namespace": "openshift-monitoring",
+        "query_method": "direct_pod_access"
+      }
+    },
+    "database_analysis": {
+      "total_resources": 0,
+      "total_clusters": 0,
+      "database_size_mb": 0,
+      "active_connections": 0,
+      "total_edges": 0,
+      "top_resource_types": {},
+      "edge_type_distribution": {}
+    }
+  },
+  "recommendations": [
+    "Complete assessment by running all component scripts",
+    "Review individual script outputs for detailed analysis",
+    "Establish performance baselines for future comparisons"
+  ],
+  "architectural_analysis": "Assessment methodology separated into modular scripts for maintainability",
+  "assessment_quality": {
+    "metrics_collection_success": false,
+    "prometheus_api_working": false,
+    "database_analysis_completed": false,
+    "missing_data": [],
+    "notes": [
+      "Template file - replace with actual assessment data"
+    ]
+  }
+}
