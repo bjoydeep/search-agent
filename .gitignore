@@ -22,3 +22,6 @@ Thumbs.db
 
 # MCP configuration (may contain credentials)
 .mcp.json
+
+# Generated assessment reports
+**/monitoring_data/**

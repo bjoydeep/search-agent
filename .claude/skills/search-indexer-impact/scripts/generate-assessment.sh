@@ -139,39 +139,104 @@ echo "Extracted metrics:"
 echo "  Total requests processed: $TOTAL_REQUESTS"
 echo "  Current requests in flight: $REQUESTS_IN_FLIGHT"
 
-# Calculate confidence score using structured data
+# Calculate confidence score using human-like context-aware logic
 if [ "$TOTAL_REQUESTS" -gt 0 ]; then
   # Capacity utilization already calculated in JSON, but ensure we have a value
   if [ -z "$CAPACITY_UTILIZATION" ] || [ "$CAPACITY_UTILIZATION" = "null" ]; then
     CAPACITY_UTILIZATION=$(echo "scale=2; $REQUESTS_IN_FLIGHT * 100 / 25" | bc)
   fi
 
-  # Enhanced confidence scoring based on data quality and system performance
-  if [ "$REQUESTS_IN_FLIGHT" -eq 0 ] && [ "$TOTAL_REQUESTS" -gt 1000 ]; then
-    CONFIDENCE_SCORE="1.0"
-    CONFIDENCE_LEVEL="EXCELLENT"
-  elif [ "$REQUESTS_IN_FLIGHT" -eq 0 ]; then
-    CONFIDENCE_SCORE="0.9"
-    CONFIDENCE_LEVEL="GOOD"
+  # Get measurement quality indicators (ensure we have valid values)
+  REQUEST_DURATION_P95=${REQUEST_DURATION_P95:-0}
+  SUCCESS_RATE=${SUCCESS_RATE:-100}
+  AVG_REQUEST_SIZE=$(jq -r '.raw_metrics.prometheus.avg_request_size.value // 0' "$OUTPUT_FILE")
+
+  # Context-aware confidence assessment
+  if [ "$REQUESTS_IN_FLIGHT" -eq 0 ]; then
+    # Idle state - determine if this is "proven capable" or "untested"
+    if [ "$TOTAL_REQUESTS" -gt 5000 ] && [ "$(echo "$SUCCESS_RATE > 95" | bc)" = "1" ] && [ "$(echo "$REQUEST_DURATION_P95 < 2" | bc)" = "1" ]; then
+      CONFIDENCE_SCORE="0.95"
+      CONFIDENCE_LEVEL="EXCELLENT"
+      CONFIDENCE_REASONING="Idle state with proven high-throughput capability (${TOTAL_REQUESTS} requests, ${SUCCESS_RATE}% success rate)"
+    elif [ "$TOTAL_REQUESTS" -gt 1000 ] && [ "$(echo "$SUCCESS_RATE > 90" | bc)" = "1" ]; then
+      CONFIDENCE_SCORE="0.85"
+      CONFIDENCE_LEVEL="GOOD"
+      CONFIDENCE_REASONING="Idle state with demonstrated capability (${TOTAL_REQUESTS} requests processed successfully)"
+    elif [ "$TOTAL_REQUESTS" -gt 100 ]; then
+      CONFIDENCE_SCORE="0.75"
+      CONFIDENCE_LEVEL="GOOD"
+      CONFIDENCE_REASONING="Idle state with limited operational history (${TOTAL_REQUESTS} requests)"
+    else
+      CONFIDENCE_SCORE="0.65"
+      CONFIDENCE_LEVEL="MEDIUM"
+      CONFIDENCE_REASONING="Idle state with minimal operational history - capability unproven"
+    fi
   elif [ "$REQUESTS_IN_FLIGHT" -lt 5 ]; then
-    CONFIDENCE_SCORE="0.8"
-    CONFIDENCE_LEVEL="GOOD"
+    # Light load - assess processing efficiency
+    if [ "$(echo "$REQUEST_DURATION_P95 < 1" | bc)" = "1" ] && [ "$(echo "$SUCCESS_RATE > 98" | bc)" = "1" ]; then
+      CONFIDENCE_SCORE="0.9"
+      CONFIDENCE_LEVEL="EXCELLENT"
+      CONFIDENCE_REASONING="Light load (${REQUESTS_IN_FLIGHT}/25) with excellent processing efficiency"
+    else
+      CONFIDENCE_SCORE="0.8"
+      CONFIDENCE_LEVEL="GOOD"
+      CONFIDENCE_REASONING="Light load (${REQUESTS_IN_FLIGHT}/25) with normal processing"
+    fi
   elif [ "$REQUESTS_IN_FLIGHT" -lt 15 ]; then
-    CONFIDENCE_SCORE="0.7"
-    CONFIDENCE_LEVEL="MEDIUM"
+    # Moderate load - check for processing stress indicators
+    if [ "$(echo "$REQUEST_DURATION_P95 < 3" | bc)" = "1" ] && [ "$(echo "$SUCCESS_RATE > 95" | bc)" = "1" ]; then
+      CONFIDENCE_SCORE="0.75"
+      CONFIDENCE_LEVEL="GOOD"
+      CONFIDENCE_REASONING="Moderate load (${REQUESTS_IN_FLIGHT}/25) handling well"
+    else
+      CONFIDENCE_SCORE="0.6"
+      CONFIDENCE_LEVEL="MEDIUM"
+      CONFIDENCE_REASONING="Moderate load (${REQUESTS_IN_FLIGHT}/25) showing stress indicators"
+    fi
+  elif [ "$REQUESTS_IN_FLIGHT" -lt 20 ]; then
+    # High load - assess whether system is coping
+    if [ "$(echo "$REQUEST_DURATION_P95 < 5" | bc)" = "1" ] && [ "$(echo "$SUCCESS_RATE > 90" | bc)" = "1" ]; then
+      CONFIDENCE_SCORE="0.6"
+      CONFIDENCE_LEVEL="MEDIUM"
+      CONFIDENCE_REASONING="High load (${REQUESTS_IN_FLIGHT}/25) but maintaining performance"
+    else
+      CONFIDENCE_SCORE="0.4"
+      CONFIDENCE_LEVEL="LOW"
+      CONFIDENCE_REASONING="High load (${REQUESTS_IN_FLIGHT}/25) with performance degradation"
+    fi
   else
-    CONFIDENCE_SCORE="0.5"
+    # Critical load - approaching capacity limits
+    CONFIDENCE_SCORE="0.3"
     CONFIDENCE_LEVEL="LOW"
+    CONFIDENCE_REASONING="Critical load (${REQUESTS_IN_FLIGHT}/25) - approaching capacity limits"
+  fi
+
+  # Apply measurement quality adjustments
+  MEASUREMENT_QUALITY="good"
+  if [ "$AVG_REQUEST_SIZE" = "0" ] || [ "$AVG_REQUEST_SIZE" = "null" ]; then
+    # For stable clusters, avg_request_size=0 is normal (health checks, no-change syncs)
+    if [ "$TOTAL_REQUESTS" -gt 100 ]; then
+      MEASUREMENT_QUALITY="normal_stable_cluster"
+    else
+      MEASUREMENT_QUALITY="insufficient_data"
+      ORIGINAL_SCORE="$CONFIDENCE_SCORE"
+      CONFIDENCE_SCORE=$(echo "scale=3; $CONFIDENCE_SCORE * 0.8" | bc 2>/dev/null || echo "$CONFIDENCE_SCORE")
+      CONFIDENCE_REASONING="${CONFIDENCE_REASONING} (adjusted for limited measurement data)"
+    fi
   fi
 else
   CAPACITY_UTILIZATION="0"
   CONFIDENCE_SCORE="0.6"
   CONFIDENCE_LEVEL="MEDIUM"
+  CONFIDENCE_REASONING="No operational data available - cannot assess capability"
 fi
 
 echo "  Capacity utilization: ${CAPACITY_UTILIZATION}%"
 echo "  Confidence score: $CONFIDENCE_SCORE"
 echo "  Health level: $CONFIDENCE_LEVEL"
+if [ ! -z "$CONFIDENCE_REASONING" ]; then
+  echo "  Reasoning: $CONFIDENCE_REASONING"
+fi
 
 # Historical Trend Analysis using Prometheus Time Series Data
 echo ""
@@ -202,6 +267,7 @@ if ACM_NAMESPACE="$ACM_NAMESPACE" EXECUTION_LOG="$EXECUTION_LOG" "${SCRIPT_DIR}/
     ORIGINAL_CONFIDENCE_SCORE="$CONFIDENCE_SCORE"
     CONFIDENCE_SCORE=$(echo "scale=3; $CONFIDENCE_SCORE * 0.7" | bc 2>/dev/null || echo "$CONFIDENCE_SCORE")
     CONFIDENCE_LEVEL="MEDIUM"
+    CONFIDENCE_REASONING="${CONFIDENCE_REASONING} [ADJUSTED: -30% for ${DEGRADING_COUNT} degrading trends]"
     echo "  📉 Confidence reduced from $ORIGINAL_CONFIDENCE_SCORE to $CONFIDENCE_SCORE due to historical degradation patterns"
   elif [ "$WATCH_COUNT" -gt 3 ]; then
     TREND_ANALYSIS="DEGRADING_MODERATE"
@@ -209,6 +275,7 @@ if ACM_NAMESPACE="$ACM_NAMESPACE" EXECUTION_LOG="$EXECUTION_LOG" "${SCRIPT_DIR}/
     # Slightly reduce confidence for systems with multiple watch conditions
     ORIGINAL_CONFIDENCE_SCORE="$CONFIDENCE_SCORE"
     CONFIDENCE_SCORE=$(echo "scale=3; $CONFIDENCE_SCORE * 0.85" | bc 2>/dev/null || echo "$CONFIDENCE_SCORE")
+    CONFIDENCE_REASONING="${CONFIDENCE_REASONING} [ADJUSTED: -15% for ${WATCH_COUNT} watch patterns]"
     echo "  📊 Confidence adjusted from $ORIGINAL_CONFIDENCE_SCORE to $CONFIDENCE_SCORE due to watch patterns"
   elif [ "$STABLE_COUNT" -gt 5 ]; then
     TREND_ANALYSIS="STABLE"
@@ -276,6 +343,7 @@ STABLE_COUNT="${STABLE_COUNT:-0}"
 MEMORY_TRENDS="${MEMORY_TRENDS:-}"
 CPU_TRENDS="${CPU_TRENDS:-}"
 REQUEST_TRENDS="${REQUEST_TRENDS:-}"
+CONFIDENCE_REASONING="${CONFIDENCE_REASONING:-}"
 
 # Save detailed execution log for debugging
 #EXECUTION_LOG_FILE="$ASSESSMENT_OUTPUT_DIR/${HUB_CLUSTER_ID}_indexer_execution.log"
@@ -289,6 +357,7 @@ echo "📊 Updating JSON with confidence scoring and final assessment..."
 # Add confidence scoring section to JSON
 jq --arg score "$CONFIDENCE_SCORE" \
    --arg level "$CONFIDENCE_LEVEL" \
+   --arg reasoning "${CONFIDENCE_REASONING:-No specific reasoning provided}" \
    --argjson total "$TOTAL_REQUESTS" \
    --argjson inflight "$REQUESTS_IN_FLIGHT" \
    --argjson capacity "$CAPACITY_UTILIZATION" \
@@ -297,6 +366,7 @@ jq --arg score "$CONFIDENCE_SCORE" \
   .confidence_scoring = {
     "confidence_score": ($score | tonumber),
     "confidence_level": $level,
+    "reasoning": $reasoning,
     "contributing_factors": [
       "Total requests processed: \($total)",
       "Current capacity utilization: \($capacity)%",
